@@ -1,0 +1,8 @@
+# Only what the build needs goes into the build context.
+.git
+.github
+bin
+deploy
+docs
+*.md
+compose.yaml

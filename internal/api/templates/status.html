@@ -49,7 +49,7 @@
       <tbody>
       {{range .Targets}}
         <tr>
-          <td>{{.Name}}</td>
+          <td>{{.Name}}{{if eq .Source "git"}} <span class="pill wait" title="listed in git: change it there, not here">git</span>{{end}}</td>
           {{with .LastCheck}}
             <td>{{if .OK}}<span class="pill up">UP</span>{{else}}<span class="pill down">DOWN</span>{{end}}</td>
             <td>{{if .StatusCode}}{{.StatusCode}} · {{end}}{{.LatencyMS}} ms</td>

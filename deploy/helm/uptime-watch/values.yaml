@@ -36,6 +36,20 @@ migrations:
   # Runs `uptime-watch migrate` as a Job before every install and upgrade.
   enabled: true
 
+# Targets as code. With enabled: true, a Job after every install and upgrade
+# makes the database match this list: it creates and updates these targets
+# and deletes targets it created before that are no longer listed. Targets
+# added through the API are never deleted; listing one here by name makes it
+# a git target (it keeps its checks). With enabled: false nothing is synced
+# and existing targets stay as they are.
+gitTargets:
+  enabled: false
+  targets: []
+  # - name: github
+  #   url: https://github.com
+  #   interval_seconds: 30   # optional, default 60, at least 10
+  #   timeout_ms: 5000       # optional, default 5000, below the interval
+
 prune:
   enabled: true
   schedule: "17 3 * * *" # every day at 03:17

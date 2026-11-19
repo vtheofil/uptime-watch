@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end test on a kind cluster:
-#   Postgres -> Secret -> helm install (migrate Job runs first) -> wait ->
-#   add a target through the API -> wait until the worker has checked it ->
+#   Postgres -> Secret -> helm install (migrate Job runs first, sync-targets
+#   Job last, creating the git target "self") -> add the target "self-api"
+#   through the API -> wait until the worker has checked both ->
 #   check the status in the API and in /metrics.
 # Usage: deploy/kind/e2e.sh <image>   (the image must already be loaded into kind)
 set -euo pipefail
@@ -46,9 +47,14 @@ helm upgrade --install uptime-watch "$CHART" -n "$NS" --wait --timeout 3m \
   --set image.tag="${IMAGE##*:}" \
   --set image.pullPolicy=Never \
   --set worker.pollInterval=1s \
+  --set gitTargets.enabled=true \
+  --set-json "gitTargets.targets=[{\"name\":\"self\",\"url\":\"http://uptime-watch.${NS}.svc/healthz\",\"interval_seconds\":10}]" \
   "${MONITORING_ARGS[@]}" \
   ${HELM_EXTRA_ARGS:-}
 kubectl -n "$NS" get pods
+
+step "the sync-targets Job ran after the install"
+kubectl -n "$NS" logs job/uptime-watch-sync-targets
 
 step "port-forward the API"
 kubectl -n "$NS" port-forward svc/uptime-watch 18080:80 >/dev/null 2>&1 &
@@ -57,22 +63,26 @@ trap 'kill $PF 2>/dev/null || true' EXIT
 for _ in $(seq 30); do curl -fsS localhost:18080/readyz >/dev/null 2>&1 && break; sleep 1; done
 curl -fsS localhost:18080/readyz
 
-step "add a target: the API's own /healthz, reached through the Service"
+# target NAME prints that target's JSON object from /api/targets, one line.
+target() {
+  curl -fsS localhost:18080/api/targets | sed 's/},{"id"/}\n{"id"/g' | grep "\"name\":\"$1\"," || true
+}
+
+step "the git target from the values is there"
+target self | grep '"source":"git"' || { echo "self is missing or not a git target"; exit 1; }
+
+step "add a target through the API: the API's own /healthz, reached through the Service"
 code=$(curl -s -o /tmp/e2e-create.json -w '%{http_code}' -X POST localhost:18080/api/targets \
   -H "Authorization: Bearer $TOKEN" \
-  -d "{\"name\":\"self\",\"url\":\"http://uptime-watch.${NS}.svc/healthz\",\"interval_seconds\":10}")
+  -d "{\"name\":\"self-api\",\"url\":\"http://uptime-watch.${NS}.svc/healthz\",\"interval_seconds\":10}")
 cat /tmp/e2e-create.json; echo
 [[ $code == 201 || $code == 409 ]] || { echo "create failed: $code"; exit 1; }
 
-step "wait until the worker has checked it"
-for _ in $(seq 60); do
-  if curl -fsS localhost:18080/api/targets | grep -q '"name":"self".*"ok":true'; then
-    curl -fsS localhost:18080/api/targets; echo
-    break
-  fi
-  sleep 1
-done
-curl -fsS localhost:18080/api/targets | grep -q '"name":"self".*"ok":true' || { echo "target never came up"; exit 1; }
+step "wait until the worker has checked both"
+both_up() { target self | grep -q '"ok":true' && target self-api | grep -q '"ok":true'; }
+for _ in $(seq 60); do both_up && break; sleep 1; done
+curl -fsS localhost:18080/api/targets; echo
+both_up || { echo "a target never came up"; exit 1; }
 
 step "metrics"
 curl -fsS localhost:18080/metrics | grep 'uptime_target_up{target="self"} 1'

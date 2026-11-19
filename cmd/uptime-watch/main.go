@@ -22,6 +22,8 @@ const usageText = `usage:
   uptime-watch check <url>   check one URL once and print the result
   uptime-watch migrate       create or update the database tables
   uptime-watch prune         delete checks older than RETENTION_DAYS
+  uptime-watch sync-targets <file>
+                             make the targets from git match <file> (JSON)
   uptime-watch version       print the version`
 
 func main() {
@@ -52,6 +54,11 @@ func main() {
 		err = runMigrate(ctx, cfg)
 	case "prune":
 		err = runPrune(ctx, cfg)
+	case "sync-targets":
+		if len(os.Args) != 3 {
+			usage()
+		}
+		err = runSyncTargets(ctx, cfg, os.Args[2])
 	case "version":
 		fmt.Println(version)
 	default:

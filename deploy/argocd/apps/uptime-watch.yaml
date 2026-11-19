@@ -21,8 +21,19 @@ spec:
           repository: ghcr.io/vtheofil/uptime-watch
           # Pin a commit SHA pushed by CI, e.g. "3f2c1d0e...". "latest" is only
           # for the first try: with it, git does not say which version runs.
-          tag: 092ee8e66204b96d107a8d680db260ceb5b71a89
+          tag: e744b77b22069e260442c788f3401ff525b6f7ae
           pullPolicy: IfNotPresent
+        # Targets as code: add, change or remove a target here, commit, push.
+        # After the sync, the sync-targets Job makes the database match this
+        # list. Targets added through the API (like "broken") are left alone.
+        gitTargets:
+          enabled: true
+          targets:
+            - name: self
+              url: http://uptime-watch.uptime-watch.svc/healthz
+              interval_seconds: 30
+            - name: github
+              url: https://github.com
         metrics:
           serviceMonitor:
             enabled: true

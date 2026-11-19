@@ -134,6 +134,7 @@ func (s *Store) DeleteTarget(ctx context.Context, id int64) error {
 // DueTarget is what the worker needs to run one check.
 type DueTarget struct {
 	ID      int64
+	Name    string // used as the "target" label in metrics
 	URL     string
 	Timeout time.Duration
 }
@@ -152,14 +153,14 @@ func (s *Store) ClaimDue(ctx context.Context, limit int) ([]DueTarget, error) {
 			LIMIT  $1
 			FOR UPDATE SKIP LOCKED
 		)
-		RETURNING t.id, t.url, t.timeout_ms`, limit)
+		RETURNING t.id, t.name, t.url, t.timeout_ms`, limit)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (DueTarget, error) {
 		var d DueTarget
 		var timeoutMS int
-		err := row.Scan(&d.ID, &d.URL, &timeoutMS)
+		err := row.Scan(&d.ID, &d.Name, &d.URL, &timeoutMS)
 		d.Timeout = time.Duration(timeoutMS) * time.Millisecond
 		return d, err
 	})
@@ -213,6 +214,86 @@ func (s *Store) Prune(ctx context.Context, days int) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
+// TargetExists reports whether a target with this id exists.
+func (s *Store) TargetExists(ctx context.Context, id int64) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM targets WHERE id = $1)`, id).Scan(&exists)
+	return exists, err
+}
+
+// TargetStatus is a target with its latest check and its last 24 hours.
+type TargetStatus struct {
+	Target
+	LastCheck *Check // nil until the first check is stored
+	Checks24h int    // checks in the last 24 hours
+	Up24h     int    // of those, how many were up
+}
+
+// ListStatus returns every target with its latest check and 24-hour counts,
+// in one query. LATERAL runs the two small subqueries once per target, and
+// both use the (target_id, checked_at DESC) index.
+func (s *Store) ListStatus(ctx context.Context) ([]TargetStatus, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT t.id, t.name, t.url, t.interval_seconds, t.timeout_ms, t.enabled,
+		       t.next_check_at, t.created_at,
+		       l.checked_at, l.ok, l.status_code, l.latency_ms, l.error,
+		       d.total, d.up
+		FROM targets t
+		LEFT JOIN LATERAL (
+			SELECT checked_at, ok, status_code, latency_ms, error
+			FROM   checks
+			WHERE  target_id = t.id
+			ORDER  BY checked_at DESC
+			LIMIT  1
+		) l ON true
+		CROSS JOIN LATERAL (
+			SELECT count(*) AS total, count(*) FILTER (WHERE ok) AS up
+			FROM   checks
+			WHERE  target_id = t.id AND checked_at > now() - interval '24 hours'
+		) d
+		ORDER BY t.name`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (TargetStatus, error) {
+		var ts TargetStatus
+		// The latest-check columns are NULL for a target never checked,
+		// so they are read into pointers first.
+		var (
+			checkedAt *time.Time
+			ok        *bool
+			status    *int
+			latency   *int
+			errText   *string
+		)
+		err := row.Scan(
+			&ts.ID, &ts.Name, &ts.URL, &ts.IntervalSeconds, &ts.TimeoutMS, &ts.Enabled,
+			&ts.NextCheckAt, &ts.CreatedAt,
+			&checkedAt, &ok, &status, &latency, &errText,
+			&ts.Checks24h, &ts.Up24h,
+		)
+		if err != nil || checkedAt == nil {
+			return ts, err
+		}
+		c := Check{CheckedAt: *checkedAt, OK: *ok, LatencyMS: *latency}
+		if status != nil {
+			c.StatusCode = *status
+		}
+		if errText != nil {
+			c.Error = *errText
+		}
+		ts.LastCheck = &c
+		return ts, nil
+	})
+}
+
+// constraintMessages explains each CHECK constraint in words a user can act on.
+var constraintMessages = map[string]string{
+	"targets_interval_seconds_check": "interval_seconds must be at least 10",
+	"targets_timeout_ms_check":       "timeout_ms must be between 100 and 30000",
+	"timeout_below_interval":         "timeout_ms must be shorter than interval_seconds",
+}
+
 // translate turns Postgres constraint errors into errors the API can act on.
 func translate(err error) error {
 	var pgErr *pgconn.PgError
@@ -221,7 +302,11 @@ func translate(err error) error {
 		case "23505": // unique_violation
 			return ErrDuplicateName
 		case "23514": // check_violation
-			return fmt.Errorf("%w: %s", ErrInvalidTarget, pgErr.ConstraintName)
+			msg, known := constraintMessages[pgErr.ConstraintName]
+			if !known {
+				msg = pgErr.ConstraintName
+			}
+			return fmt.Errorf("%w: %s", ErrInvalidTarget, msg)
 		}
 	}
 	return err

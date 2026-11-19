@@ -4,75 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-
 	"github.com/vtheofil/uptime-watch/internal/store"
+	"github.com/vtheofil/uptime-watch/internal/testdb"
 )
 
 // One real Postgres container serves every test in this package.
-// Each test starts from empty tables (see newStore).
-var dsn string
-
-func TestMain(m *testing.M) {
-	ctx := context.Background()
-	ctr, err := postgres.Run(ctx, "postgres:17-alpine",
-		postgres.WithDatabase("uptime"),
-		postgres.WithUsername("uptime"),
-		postgres.WithPassword("uptime"),
-		postgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "start postgres container (is Docker running?):", err)
-		os.Exit(1)
-	}
-	dsn, err = ctr.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	code := m.Run()
-	_ = testcontainers.TerminateContainer(ctr)
-	os.Exit(code)
-}
-
-// newStore opens the store, applies migrations and empties both tables.
-func newStore(t *testing.T) *store.Store {
-	t.Helper()
-	ctx := context.Background()
-
-	s, err := store.Open(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(s.Close)
-
-	if _, err := s.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	exec(t, `TRUNCATE targets, checks RESTART IDENTITY`)
-	return s
-}
-
-// exec runs raw SQL for test setup, e.g. to move a check into the past.
-func exec(t *testing.T, sql string, args ...any) {
-	t.Helper()
-	conn, err := pgx.Connect(context.Background(), dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close(context.Background())
-	if _, err := conn.Exec(context.Background(), sql, args...); err != nil {
-		t.Fatal(err)
-	}
-}
+func TestMain(m *testing.M) { testdb.Main(m) }
 
 func mustCreate(t *testing.T, s *store.Store, nt store.NewTarget) store.Target {
 	t.Helper()
@@ -84,7 +25,7 @@ func mustCreate(t *testing.T, s *store.Store, nt store.NewTarget) store.Target {
 }
 
 func TestMigrateTwiceAppliesNothingTheSecondTime(t *testing.T) {
-	s := newStore(t) // already migrated once
+	s := testdb.New(t) // already migrated once
 	n, err := s.Migrate(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +36,7 @@ func TestMigrateTwiceAppliesNothingTheSecondTime(t *testing.T) {
 }
 
 func TestCreateTargetUsesDefaults(t *testing.T) {
-	s := newStore(t)
+	s := testdb.New(t)
 	tg := mustCreate(t, s, store.NewTarget{Name: "go-dev", URL: "https://go.dev"})
 
 	if tg.ID == 0 || tg.IntervalSeconds != 60 || tg.TimeoutMS != 5000 || !tg.Enabled {
@@ -104,7 +45,7 @@ func TestCreateTargetUsesDefaults(t *testing.T) {
 }
 
 func TestCreateTargetRejectsBadInput(t *testing.T) {
-	s := newStore(t)
+	s := testdb.New(t)
 	ctx := context.Background()
 	mustCreate(t, s, store.NewTarget{Name: "go-dev", URL: "https://go.dev"})
 
@@ -125,13 +66,13 @@ func TestCreateTargetRejectsBadInput(t *testing.T) {
 }
 
 func TestClaimDueGivesEachTargetOncePerInterval(t *testing.T) {
-	s := newStore(t)
+	s := testdb.New(t)
 	ctx := context.Background()
 	for _, name := range []string{"a", "b", "c"} {
 		mustCreate(t, s, store.NewTarget{Name: name, URL: "https://" + name + ".example"})
 	}
 	disabled := mustCreate(t, s, store.NewTarget{Name: "off", URL: "https://off.example"})
-	exec(t, `UPDATE targets SET enabled = false WHERE id = $1`, disabled.ID)
+	testdb.Exec(t, `UPDATE targets SET enabled = false WHERE id = $1`, disabled.ID)
 
 	first, err := s.ClaimDue(ctx, 2)
 	if err != nil {
@@ -150,7 +91,7 @@ func TestClaimDueGivesEachTargetOncePerInterval(t *testing.T) {
 }
 
 func TestConcurrentClaimsNeverShareATarget(t *testing.T) {
-	s := newStore(t)
+	s := testdb.New(t)
 	ctx := context.Background()
 	const targets = 60
 	for i := range targets {
@@ -195,7 +136,7 @@ func TestConcurrentClaimsNeverShareATarget(t *testing.T) {
 }
 
 func TestRecordAndReadChecks(t *testing.T) {
-	s := newStore(t)
+	s := testdb.New(t)
 	ctx := context.Background()
 	tg := mustCreate(t, s, store.NewTarget{Name: "go-dev", URL: "https://go.dev"})
 
@@ -223,7 +164,7 @@ func TestRecordAndReadChecks(t *testing.T) {
 }
 
 func TestDeleteTargetRemovesItsChecks(t *testing.T) {
-	s := newStore(t)
+	s := testdb.New(t)
 	ctx := context.Background()
 	tg := mustCreate(t, s, store.NewTarget{Name: "go-dev", URL: "https://go.dev"})
 	_ = s.RecordCheck(ctx, store.CheckRecord{TargetID: tg.ID, OK: true, StatusCode: 200})
@@ -240,12 +181,12 @@ func TestDeleteTargetRemovesItsChecks(t *testing.T) {
 }
 
 func TestPruneDeletesOnlyOldChecks(t *testing.T) {
-	s := newStore(t)
+	s := testdb.New(t)
 	ctx := context.Background()
 	tg := mustCreate(t, s, store.NewTarget{Name: "go-dev", URL: "https://go.dev"})
 	_ = s.RecordCheck(ctx, store.CheckRecord{TargetID: tg.ID, OK: true, StatusCode: 200})
 	_ = s.RecordCheck(ctx, store.CheckRecord{TargetID: tg.ID, OK: true, StatusCode: 200})
-	exec(t, `UPDATE checks SET checked_at = now() - interval '40 days' WHERE id = 1`)
+	testdb.Exec(t, `UPDATE checks SET checked_at = now() - interval '40 days' WHERE id = 1`)
 
 	n, err := s.Prune(ctx, 30)
 	if err != nil {

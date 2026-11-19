@@ -32,11 +32,21 @@ fi
 TOKEN=$(kubectl -n "$NS" get secret uptime-watch -o jsonpath='{.data.ADMIN_TOKEN}' | base64 -d)
 
 step "helm install $IMAGE"
+# With the monitoring stack installed (its CRDs exist), also install the
+# ServiceMonitor, alert rules and Grafana dashboard. Without it, skip them.
+MONITORING_ARGS=()
+if kubectl get crd servicemonitors.monitoring.coreos.com >/dev/null 2>&1; then
+  echo "monitoring stack found: enabling ServiceMonitor, PrometheusRule and dashboard"
+  MONITORING_ARGS=(--set metrics.serviceMonitor.enabled=true
+                   --set metrics.prometheusRule.enabled=true
+                   --set metrics.dashboard.enabled=true)
+fi
 helm upgrade --install uptime-watch "$CHART" -n "$NS" --wait --timeout 3m \
   --set image.repository="${IMAGE%:*}" \
   --set image.tag="${IMAGE##*:}" \
   --set image.pullPolicy=Never \
   --set worker.pollInterval=1s \
+  "${MONITORING_ARGS[@]}" \
   ${HELM_EXTRA_ARGS:-}
 kubectl -n "$NS" get pods
 

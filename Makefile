@@ -9,7 +9,7 @@ DATABASE_URL ?= postgres://uptime:uptime@localhost:5433/uptime?sslmode=disable
 
 .PHONY: help
 help: ## list the targets
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
+	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-22s %s\n", $$1, $$2}'
 
 # ---- code ----
 
@@ -73,6 +73,10 @@ kind-deploy: image ## build the image, load it into kind, install Postgres and t
 	kind load docker-image $(IMAGE) --name $(KIND_CLUSTER)
 	./deploy/kind/e2e.sh $(IMAGE)
 
+.PHONY: kind-monitoring
+kind-monitoring: ## install Prometheus, Grafana and Alertmanager into kind (run before kind-deploy)
+	./deploy/monitoring/install.sh
+
 .PHONY: kind-ui
 kind-ui: ## open the status page on http://localhost:8080 (Ctrl+C to stop)
 	kubectl -n uptime-watch port-forward svc/uptime-watch 8080:80
@@ -91,7 +95,7 @@ kind-ports: ## open every UI of the kind cluster on localhost (Ctrl+C closes the
 	sleep 2; \
 	echo "status page   http://localhost:18080"; \
 	echo "Prometheus    http://localhost:9090"; \
-	echo "Grafana       http://localhost:3000   (admin / admin)"; \
+	echo "Grafana       http://localhost:3000   (admin; password admin on first login)"; \
 	echo "Alertmanager  http://localhost:9093"; \
 	echo "Argo CD       https://localhost:8443  (admin / make kind-argocd-password)"; \
 	echo "Ctrl+C closes them all"; \

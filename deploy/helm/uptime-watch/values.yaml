@@ -1,0 +1,66 @@
+image:
+  repository: ghcr.io/vtheofil/uptime-watch
+  # Empty means the chart's appVersion. GitOps should pin a commit SHA here.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Name of an existing Secret with the keys DATABASE_URL and ADMIN_TOKEN.
+# The chart never creates it: secrets do not belong in git or in values files.
+existingSecret: uptime-watch
+
+logLevel: info
+
+api:
+  replicas: 2
+  # Seconds between /readyz turning red and the server closing. Gives
+  # Kubernetes time to take the pod out of the Service first.
+  shutdownDelay: 5s
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+worker:
+  # More replicas are safe: targets are claimed with FOR UPDATE SKIP LOCKED.
+  replicas: 1
+  concurrency: 10
+  pollInterval: 5s
+  # How long running checks may finish after SIGTERM. Must stay below
+  # terminationGracePeriodSeconds, or Kubernetes kills the pod first.
+  grace: 10s
+  terminationGracePeriodSeconds: 20
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+migrations:
+  # Runs `uptime-watch migrate` as a Job before every install and upgrade.
+  enabled: true
+
+prune:
+  enabled: true
+  schedule: "17 3 * * *" # every day at 03:17
+  retentionDays: 30
+
+metrics:
+  # These need the Prometheus Operator CRDs (kube-prometheus-stack, M9).
+  serviceMonitor:
+    enabled: false
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+  dashboard:
+    enabled: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532 # the distroless "nonroot" user; numeric so the kubelet can check it
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

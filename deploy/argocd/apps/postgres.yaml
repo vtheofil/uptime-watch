@@ -1,0 +1,26 @@
+# Development Postgres from deploy/kind/postgres.yaml. Wave 0: before the app.
+# Its password comes from the Secret "postgres", created by bootstrap.sh.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgres
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vtheofil/uptime-watch.git
+    targetRevision: main
+    path: deploy/kind
+    directory:
+      include: postgres.yaml # the folder also holds the kind config and e2e.sh
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: uptime-watch
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

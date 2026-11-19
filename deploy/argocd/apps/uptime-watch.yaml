@@ -1,0 +1,47 @@
+# The app itself, from the Helm chart in this repo. Wave 1: after Postgres
+# and the monitoring CRDs. Deploying a new version = changing image.tag here
+# in a commit; Argo CD notices and rolls it out (the migrate Job runs first,
+# as a PreSync hook).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: uptime-watch
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vtheofil/uptime-watch.git
+    targetRevision: main
+    path: deploy/helm/uptime-watch
+    helm:
+      valuesObject:
+        image:
+          repository: ghcr.io/vtheofil/uptime-watch
+          # Pin a commit SHA pushed by CI, e.g. "3f2c1d0e...". "latest" is only
+          # for the first try: with it, git does not say which version runs.
+          tag: latest
+          pullPolicy: Always
+        metrics:
+          serviceMonitor:
+            enabled: true
+          prometheusRule:
+            enabled: true
+          dashboard:
+            enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: uptime-watch
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

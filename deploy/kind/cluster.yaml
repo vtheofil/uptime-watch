@@ -1,0 +1,6 @@
+# A one-node kind cluster: enough for the app, Postgres, Argo CD and monitoring.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: uptime-watch
+nodes:
+  - role: control-plane

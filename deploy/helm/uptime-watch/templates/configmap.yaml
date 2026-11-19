@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "uw.labels" . | nindent 4 }}
+data:
+  PORT: "8080"
+  LOG_FORMAT: json
+  LOG_LEVEL: {{ .Values.logLevel | quote }}
+  SHUTDOWN_DELAY: {{ .Values.api.shutdownDelay | quote }}
+  WORKER_CONCURRENCY: {{ .Values.worker.concurrency | quote }}
+  WORKER_POLL_INTERVAL: {{ .Values.worker.pollInterval | quote }}
+  WORKER_GRACE: {{ .Values.worker.grace | quote }}
+  RETENTION_DAYS: {{ .Values.prune.retentionDays | quote }}

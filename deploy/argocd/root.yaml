@@ -1,0 +1,21 @@
+# The one Application you apply by hand. It points Argo CD at deploy/argocd/apps,
+# and every Application found there is created and kept in sync from git:
+# the "app of apps" pattern. After this, changes go through git, not kubectl.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vtheofil/uptime-watch.git
+    targetRevision: main
+    path: deploy/argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true    # an Application removed from git is removed from the cluster
+      selfHeal: true # a change made by hand with kubectl is put back to what git says

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: uptime-watch
+description: Uptime monitor — status page and API, check worker, migrations and pruning.
+type: application
+version: 0.1.0
+appVersion: "latest"

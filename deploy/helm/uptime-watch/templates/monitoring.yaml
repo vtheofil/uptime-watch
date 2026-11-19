@@ -1,0 +1,95 @@
+{{- if .Values.metrics.serviceMonitor.enabled }}
+# Tells the Prometheus Operator to scrape /metrics of the api and worker Services.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "uw.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: uptime-watch
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+{{- end }}
+{{- if .Values.metrics.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "uw.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: uptime-watch
+      rules:
+        # Every api replica exports uptime_target_up, so there is one series
+        # per pod; max by (namespace, target) folds them into one per target
+        # and keeps the namespace label for routing alerts.
+        - alert: TargetDown
+          expr: max by (namespace, target) (uptime_target_up{namespace="{{ .Release.Namespace }}"}) == 0
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: {{`"{{ $labels.target }} is down"`}}
+            description: {{`"The latest checks of {{ $labels.target }} have failed for 2 minutes. See the status page for the error."`}}
+
+        # The failure TargetDown cannot see: if the worker stops, the last
+        # result stays "up" forever. So we also alert when results get old.
+        - alert: TargetChecksStale
+          expr: |
+            time() - max by (namespace, target) (uptime_target_last_check_timestamp_seconds{namespace="{{ .Release.Namespace }}"})
+              > 3 * max by (namespace, target) (uptime_target_interval_seconds{namespace="{{ .Release.Namespace }}"})
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: {{`"{{ $labels.target }} has not been checked for 3 intervals"`}}
+            description: "No new results are coming in. Is the worker running and can it reach the database?"
+
+        - alert: UptimeWorkerDown
+          expr: absent(up{namespace="{{ .Release.Namespace }}", service="{{ .Release.Name }}-worker"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: "No uptime-watch worker is up"
+            description: "Prometheus cannot scrape any worker pod, so nothing is being checked."
+
+        - alert: UptimeAPIDown
+          expr: absent(up{namespace="{{ .Release.Namespace }}", service="{{ .Release.Name }}"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+          annotations:
+            summary: "No uptime-watch API pod is up"
+            description: "The status page, API and uptime_target_up are unavailable, so TargetDown cannot fire either."
+{{- end }}
+{{- if .Values.metrics.dashboard.enabled }}
+---
+# The Grafana sidecar (kube-prometheus-stack) loads every ConfigMap with this label.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-dashboard
+  labels:
+    {{- include "uw.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  uptime-watch.json: |-
+    {{- .Files.Get "dashboards/uptime-watch.json" | nindent 4 }}
+{{- end }}

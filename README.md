@@ -1,0 +1,237 @@
+# uptime-watch
+
+An uptime monitor written in Go and run the way production services are run:
+container image built and scanned in CI, deployed to Kubernetes with Helm and
+Argo CD, observed with Prometheus, Grafana and Alertmanager.
+
+It checks a list of URLs on a schedule, stores every result in Postgres, shows
+a status page, exposes a JSON API and exports metrics that drive alerts.
+
+```
+            ┌──────────────┐  claim due targets   ┌──────────┐
+            │    worker    │ ───────────────────▶ │          │
+ sites ◀────│ (N replicas) │  store results       │ Postgres │
+  HTTP GET  └──────────────┘ ───────────────────▶ │          │
+                   │ /metrics                     └──────────┘
+                   ▼                                    ▲
+            ┌──────────────┐   scrape /metrics   ┌──────────────┐
+            │  Prometheus  │ ◀─────────────────  │  api (serve) │ ◀── browser / curl
+            └──────────────┘                     └──────────────┘
+              │         │
+          Grafana   Alertmanager → notifications
+```
+
+## Features
+
+- **One binary, five commands**: `serve` (status page, API, `/healthz`, `/readyz`,
+  `/metrics`), `worker` (the check loop), `migrate`, `prune`, `check <url>`.
+- **Horizontally scalable worker**: due targets are claimed with
+  `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)`, so any number of
+  worker replicas share the work and never check the same target twice. A test
+  proves it with concurrent workers on a real Postgres.
+- **Bounded concurrency** with a channel used as a semaphore; the worker only
+  claims as many targets as it has free slots.
+- **Graceful shutdown** that matches Kubernetes: on `SIGTERM` the API fails
+  `/readyz`, waits for the Service to drop it, then drains; the worker stops
+  claiming and gives running checks a grace period to finish.
+- **Up/down rule**: final status below 400 after following redirects is up;
+  4xx/5xx, timeouts, DNS/TCP/TLS errors are down, with the error stored.
+- **Metrics and alerts** for the failures that matter, including the one that
+  is easy to miss: if the worker stops, the last result stays "up" forever, so
+  `TargetChecksStale` alerts when results get older than three intervals.
+- **Tests against real dependencies**: real HTTP servers (`httptest`) and a real
+  Postgres in Docker (`testcontainers-go`); no mocks.
+
+## Quick start
+
+Requirements: Go 1.27, Docker.
+
+```bash
+make db        # Postgres in Docker (port 5433) + migrations
+make run       # serve on :8080 and worker on :8081; Ctrl+C stops both
+```
+
+Add a target and open <http://localhost:8080>:
+
+```bash
+curl -X POST localhost:8080/api/targets \
+  -H "Authorization: Bearer dev-token" \
+  -d '{"name":"go-dev","url":"https://go.dev","interval_seconds":30}'
+```
+
+Run the checks CI runs:
+
+```bash
+make lint      # gofmt, go vet, staticcheck, govulncheck
+make test      # unit and integration tests (needs Docker)
+```
+
+## API
+
+| Method and path | Purpose | Auth |
+|---|---|---|
+| `GET /` | Status page (HTML, refreshes every 30 s) | – |
+| `GET /api/targets` | Targets with their latest check and 24 h uptime | – |
+| `POST /api/targets` | Create a target: `name`, `url`, optional `interval_seconds` (≥ 10, default 60) and `timeout_ms` (100–30000, below the interval, default 5000) | Bearer token |
+| `DELETE /api/targets/{id}` | Delete a target and its history | Bearer token |
+| `GET /api/targets/{id}/checks?limit=100` | Latest checks of a target (limit 1–1000) | – |
+| `GET /healthz` | Liveness: the process runs | – |
+| `GET /readyz` | Readiness: the database answers and we are not shutting down | – |
+| `GET /metrics` | Prometheus metrics | – |
+
+The write endpoints need `Authorization: Bearer $ADMIN_TOKEN`. With
+`ADMIN_TOKEN` unset they are switched off (403), and the server is read-only.
+
+## Configuration
+
+All settings come from environment variables.
+
+| Variable | Default | Used by |
+|---|---|---|
+| `DATABASE_URL` | – (required) | all but `check` |
+| `ADMIN_TOKEN` | empty: write API off | serve |
+| `PORT` | `8080` | serve, worker |
+| `WORKER_CONCURRENCY` | `10` | worker |
+| `WORKER_POLL_INTERVAL` | `5s` | worker |
+| `WORKER_GRACE` | `10s` | worker |
+| `SHUTDOWN_DELAY` | `0` (Helm chart: `5s`) | serve |
+| `RETENTION_DAYS` | `30` | prune |
+| `LOG_FORMAT` | `text` (Helm chart: `json`) | all |
+| `LOG_LEVEL` | `info` | all |
+
+## Metrics
+
+| Metric | Type | From |
+|---|---|---|
+| `uptime_target_up{target}` | gauge (1/0) | serve, read from the database at scrape time |
+| `uptime_target_last_check_timestamp_seconds{target}` | gauge | serve |
+| `uptime_target_interval_seconds{target}` | gauge | serve |
+| `uptime_checks_total{target,result}` | counter | worker |
+| `uptime_check_duration_seconds{target}` | histogram | worker |
+| `uptime_worker_inflight` | gauge | worker |
+| `http_requests_total{route,code}` | counter | serve |
+| `http_request_duration_seconds{route}` | histogram | serve |
+
+Target state is exported by the API from the database, not by the worker: with
+several workers, each one only sees the targets it checked.
+
+## Running on Kubernetes
+
+### kind + Helm
+
+```bash
+make kind-up        # a kind cluster with its own kubeconfig in .kube/ (your contexts stay untouched)
+make kind-deploy    # build the image, load it, install Postgres + the chart, run the e2e smoke test
+./deploy/monitoring/install.sh   # Prometheus, Grafana, Alertmanager (kube-prometheus-stack)
+make kind-ports     # status page, Prometheus, Grafana, Alertmanager and Argo CD on localhost
+```
+
+Every `make kind-*` target uses the kind kubeconfig, whatever your shell has
+set, so it cannot reach another cluster by mistake.
+
+To see the dashboard and alerts, upgrade the release with
+`--set metrics.serviceMonitor.enabled=true --set metrics.prometheusRule.enabled=true --set metrics.dashboard.enabled=true`.
+
+The chart (`deploy/helm/uptime-watch`) installs:
+
+- `api` Deployment (2 replicas, liveness `/healthz`, readiness `/readyz`,
+  PodDisruptionBudget) and its Service
+- `worker` Deployment (liveness fails if the check loop is stuck) and a Service
+  for scraping
+- `migrate` Job as a pre-install/pre-upgrade hook (Argo CD runs it as PreSync)
+- `prune` CronJob (daily, `concurrencyPolicy: Forbid`)
+- optional ServiceMonitor, PrometheusRule and Grafana dashboard
+- pods run as non-root with a read-only root filesystem, no capabilities and
+  the default seccomp profile
+
+Secrets are never in the chart or in git: it expects an existing Secret with
+`DATABASE_URL` and `ADMIN_TOKEN` (`existingSecret`, default `uptime-watch`).
+
+### GitOps with Argo CD
+
+`deploy/argocd/root.yaml` is the only manifest applied by hand. It points Argo
+CD at `deploy/argocd/apps/`, which holds one Application per component, ordered
+with sync waves:
+
+| Wave | Application | Source |
+|---|---|---|
+| -1 | `monitoring` | kube-prometheus-stack chart + `deploy/monitoring/values.yaml` |
+| 0 | `postgres` | `deploy/kind/postgres.yaml` |
+| 1 | `uptime-watch` | `deploy/helm/uptime-watch` |
+
+```bash
+./deploy/argocd/bootstrap.sh   # installs Argo CD, creates the Secrets, applies the root app
+```
+
+Deploying a new version means changing `image.tag` in
+`deploy/argocd/apps/uptime-watch.yaml` to a commit SHA pushed by CI.
+
+### Alerts
+
+| Alert | Fires when |
+|---|---|
+| `TargetDown` | a target's latest checks have been down for 2 minutes |
+| `TargetChecksStale` | a target has no new result for 3 intervals (worker stopped or cannot write) |
+| `UptimeWorkerDown` | no worker pod can be scraped for 5 minutes |
+| `UptimeAPIDown` | no API pod can be scraped for 5 minutes |
+
+### Notifications
+
+Alertmanager sends the alerts of the `uptime-watch` namespace, and every
+`critical` alert of the cluster, to a Discord channel, including a message when
+they resolve. Alerts are grouped (30 s), and a still-firing alert is repeated
+every 4 hours. The webhook URL is a secret, so it is not in git:
+
+```bash
+make kind-discord-secret   # asks for the webhook URL without echoing it, stores it as a Secret
+```
+
+Without that Secret, Alertmanager still runs and the Discord sends fail, which
+the stack's own `AlertmanagerClusterFailedToSendAlerts` alert reports.
+
+## CI
+
+`.github/workflows/ci.yaml` on every pull request and push to `main`:
+
+1. **lint and test**: gofmt, go vet, staticcheck, govulncheck, `go test -race`
+   (Postgres tests run in Docker on the runner)
+2. **image**: build with BuildKit cache, scan with Trivy (fails on fixable
+   HIGH/CRITICAL), push to `ghcr.io` on `main`, tagged with the commit SHA
+3. **e2e**: create a kind cluster, install Postgres and the chart, add a target
+   through the API and wait until the worker reports it up
+
+## Design decisions
+
+- **Scheduling in the database, not in memory.** In-memory timers would check
+  every target once per worker replica. Claiming with `SKIP LOCKED` lets
+  replicas scale out, survives restarts and costs one small query per poll.
+  The trade-off: `next_check_at` moves forward when a target is claimed, so a
+  worker that crashes mid-check loses that one check; the target is checked
+  again one interval later.
+- **Migrations as a separate step.** Running them at start-up would let two
+  pods migrate at once. `uptime-watch migrate` runs once per release as a Job.
+- **Constraints in the database.** Interval and timeout rules are `CHECK`
+  constraints, so even a manual `INSERT` cannot store a bad target; the API
+  turns constraint violations into readable 400 errors.
+- **Alerting in the platform, not the app.** The app reports state through
+  metrics; when and whom to notify is Alertmanager configuration.
+- **Standard library first.** `net/http` routing (Go 1.22 patterns) and
+  `html/template`; external modules are only `pgx`, `goose`,
+  `prometheus/client_golang`, and `testcontainers-go` for tests.
+
+## Layout
+
+```
+cmd/uptime-watch/        commands: serve, worker, check, migrate, prune
+internal/checker/        one HTTP check with a timeout; the up/down rule
+internal/store/          Postgres: targets, checks, claiming, migrations (embedded)
+internal/worker/         check loop, concurrency limit, graceful stop
+internal/api/            handlers, status page template, admin token
+internal/metrics/        Prometheus metrics and the status collector
+internal/config/         environment variables
+internal/testdb/         real Postgres in Docker for tests
+deploy/helm/             Helm chart
+deploy/kind/             kind cluster, development Postgres, e2e script
+deploy/monitoring/       kube-prometheus-stack values
+deploy/argocd/           Argo CD root app and Applications
+```

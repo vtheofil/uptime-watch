@@ -1,0 +1,84 @@
+# kube-prometheus-stack values for the kind cluster: Prometheus, Alertmanager
+# and Grafana, sized for a laptop. Used by deploy/monitoring/install.sh and by
+# the Argo CD Application in deploy/argocd/apps/monitoring.yaml.
+
+# Pick up ServiceMonitors and PrometheusRules from every namespace, not only
+# those labelled with this Helm release.
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    retention: 2d
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+    # The Discord webhook URL is a secret (anyone with it can post to the
+    # channel), so it lives in the Secret "alertmanager-discord", created with
+    # `make kind-discord-secret`, never in git. optional: Alertmanager still
+    # starts without it; Discord messages then fail and are logged.
+    volumes:
+      - name: discord
+        secret:
+          secretName: alertmanager-discord
+          optional: true
+    volumeMounts:
+      - name: discord
+        mountPath: /etc/alertmanager/discord
+        readOnly: true
+
+  config:
+    route:
+      receiver: "null" # anything not matched below is dropped
+      group_by: ["alertname", "target"]
+      group_wait: 30s      # wait for related alerts, to send them in one message
+      group_interval: 5m   # news about an open group at most every 5 minutes
+      repeat_interval: 4h  # remind while still firing, every 4 hours
+      routes:
+        # Always firing on purpose: proves the alert pipeline is alive.
+        - receiver: "null"
+          matchers: ['alertname = "Watchdog"']
+        # Our own alerts.
+        - receiver: discord
+          matchers: ['namespace = "uptime-watch"']
+        # Serious problems of the cluster itself.
+        - receiver: discord
+          matchers: ['severity = "critical"']
+    receivers:
+      - name: "null"
+      - name: discord
+        discord_configs:
+          - webhook_url_file: /etc/alertmanager/discord/webhook-url
+            send_resolved: true
+            title: >-
+              {{ if eq .Status "firing" }}🔴 FIRING{{ else }}✅ RESOLVED{{ end }}:
+              {{ .CommonLabels.alertname }}
+            message: >-
+              {{ range .Alerts }}**{{ .Annotations.summary }}**
+              {{ .Annotations.description }}
+              {{ end }}
+
+grafana:
+  # Local admin password for kind only. Anywhere else, use admin.existingSecret.
+  adminPassword: admin
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+
+# Not useful in kind (one node, no real hardware to watch).
+nodeExporter:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false

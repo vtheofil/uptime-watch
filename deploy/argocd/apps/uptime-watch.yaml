@@ -21,8 +21,8 @@ spec:
           repository: ghcr.io/vtheofil/uptime-watch
           # Pin a commit SHA pushed by CI, e.g. "3f2c1d0e...". "latest" is only
           # for the first try: with it, git does not say which version runs.
-          tag: latest
-          pullPolicy: Always
+          tag: 092ee8e66204b96d107a8d680db260ceb5b71a89
+          pullPolicy: IfNotPresent
         metrics:
           serviceMonitor:
             enabled: true

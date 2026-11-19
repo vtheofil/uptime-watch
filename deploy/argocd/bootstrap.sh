@@ -1,20 +1,39 @@
 #!/usr/bin/env bash
 # Install Argo CD into the current cluster, create the Secrets that must
 # never be in git, and hand everything else to Argo CD via the root app.
+# Prefer `make kind-argocd`, which always targets the kind cluster.
 #
-# Needs: the repo pushed to GitHub (public), and the image in ghcr.io
-# (pushed by CI on main; make the package public, or add an imagePullSecret).
+# Needs: a fresh cluster, the repo on GitHub (public) and the image in ghcr.io
+# (pushed by CI on main).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ARGOCD_VERSION=v3.6.1
 NS=uptime-watch
 
+# Safety: this installs things cluster-wide, so refuse anything but a kind
+# cluster unless asked explicitly.
+CONTEXT=$(kubectl config current-context)
+if [[ $CONTEXT != kind-* && ${FORCE:-} != 1 ]]; then
+  echo "current kubectl context is '$CONTEXT', not a kind cluster."
+  echo "Run 'make kind-argocd', or set FORCE=1 if you really mean this cluster."
+  exit 1
+fi
+echo "==> cluster: $CONTEXT"
+
 echo "==> Argo CD $ARGOCD_VERSION"
 kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -n argocd --server-side --force-conflicts \
   -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
+
+# Since Argo CD 1.8 an Application counts as healthy as soon as it exists, so
+# sync waves between Applications do not wait for each other. This health
+# check makes the root app wait until each child app is really healthy, so
+# wave -1 (monitoring, which brings the CRDs) is done before wave 1 starts.
+kubectl -n argocd patch configmap argocd-cm --type merge -p '{"data":{"resource.customizations.health.argoproj.io_Application":"hs = {}\nhs.status = \"Progressing\"\nhs.message = \"\"\nif obj.status ~= nil and obj.status.health ~= nil then\n  hs.status = obj.status.health.status\n  if obj.status.health.message ~= nil then\n    hs.message = obj.status.health.message\n  end\nend\nreturn hs\n"}}'
+
 kubectl -n argocd rollout status deploy/argocd-server --timeout=5m
 kubectl -n argocd rollout status deploy/argocd-repo-server --timeout=5m
+kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=5m
 
 echo "==> Secrets (created here, not in git)"
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
@@ -34,9 +53,7 @@ kubectl apply -f "$HERE/root.yaml"
 
 cat <<'EOF'
 
-Argo CD is syncing. To watch it:
-  kubectl -n argocd get applications -w
-  kubectl -n argocd port-forward svc/argocd-server 8443:443      # https://localhost:8443
-  user: admin, password:
-  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
+Argo CD is syncing from GitHub. To follow it:
+  make kind-ports             # Argo CD UI on https://localhost:8443
+  make kind-argocd-password   # user: admin
 EOF

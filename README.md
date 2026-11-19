@@ -199,8 +199,13 @@ with sync waves:
 | 1 | `uptime-watch` | `deploy/helm/uptime-watch` |
 
 ```bash
-./deploy/argocd/bootstrap.sh   # installs Argo CD, creates the Secrets, applies the root app
+make kind-argocd   # installs Argo CD, creates the Secrets, applies the root app
 ```
+
+The sync waves only order the Applications if Argo CD waits for each one to
+be healthy, which it stopped doing by default in 1.8; the bootstrap adds the
+Application health check that brings it back. It also refuses to run against
+a kubectl context that is not a kind cluster unless `FORCE=1` is set.
 
 Before you run it:
 

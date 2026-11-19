@@ -39,6 +39,9 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      # If the ServiceMonitor/PrometheusRule CRDs are not there yet, do not
+      # fail the dry run; the retry below applies them once they exist.
+      - SkipDryRunOnMissingResource=true
     retry:
       limit: 5
       backoff:

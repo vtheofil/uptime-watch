@@ -77,6 +77,10 @@ kind-deploy: image ## build the image, load it into kind, install Postgres and t
 kind-monitoring: ## install Prometheus, Grafana and Alertmanager into kind (run before kind-deploy)
 	./deploy/monitoring/install.sh
 
+.PHONY: kind-argocd
+kind-argocd: ## install Argo CD and let it deploy everything from GitHub (use a fresh cluster)
+	./deploy/argocd/bootstrap.sh
+
 .PHONY: kind-ui
 kind-ui: ## open the status page on http://localhost:8080 (Ctrl+C to stop)
 	kubectl -n uptime-watch port-forward svc/uptime-watch 8080:80

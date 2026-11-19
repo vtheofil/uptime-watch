@@ -179,6 +179,7 @@ The chart (`deploy/helm/uptime-watch`) installs:
   for scraping
 - `migrate` Job as a pre-install/pre-upgrade hook (Argo CD runs it as PreSync)
 - `prune` CronJob (daily, `concurrencyPolicy: Forbid`)
+- optional `sync-targets` Job and its ConfigMap (see [Targets as code](#targets-as-code))
 - optional ServiceMonitor, PrometheusRule and Grafana dashboard
 - pods run as non-root with a read-only root filesystem, no capabilities and
   the default seccomp profile
@@ -221,6 +222,44 @@ Before you run it:
 Deploying a new version means changing `image.tag` in
 `deploy/argocd/apps/uptime-watch.yaml` to a commit SHA pushed by CI.
 
+### Targets as code
+
+Targets added with `curl` live only in the database: a new cluster starts
+empty, and nothing records who added what. Targets can instead be listed in
+the chart values, in git:
+
+```yaml
+gitTargets:
+  enabled: true
+  targets:
+    - name: github
+      url: https://github.com
+      interval_seconds: 30   # optional, default 60
+```
+
+The chart turns the list into a ConfigMap, and the `sync-targets` Job (a
+post-install/post-upgrade hook, PostSync in Argo CD) makes the database match
+it after every deploy, in one transaction:
+
+| The target is… | The sync… |
+|---|---|
+| in the list, not in the database | creates it (`source: git`) |
+| in the list, with another URL, interval or timeout | updates it, keeping its checks |
+| in the list, added earlier through the API | takes it over (`source: git`), keeping its checks |
+| a git target that left the list | deletes it, with its checks |
+| added through the API and not in the list | leaves it alone |
+
+A bad entry (a typo in a field name, an interval below 10 s) fails the Job and
+changes nothing. `GET /api/targets` and the status page show each target's
+`source`. A git target deleted through the API comes back at the next deploy,
+so change git targets in git. To try the sync locally:
+
+```bash
+echo '{"targets":[{"name":"go-dev","url":"https://go.dev"}]}' > /tmp/targets.json
+DATABASE_URL='postgres://uptime:uptime@localhost:5433/uptime?sslmode=disable' \
+  go run ./cmd/uptime-watch sync-targets /tmp/targets.json
+```
+
 ### Alerts
 
 | Alert | Fires when |
@@ -252,8 +291,9 @@ the stack's own `AlertmanagerClusterFailedToSendAlerts` alert reports.
    (Postgres tests run in Docker on the runner)
 2. **image**: build with BuildKit cache, scan with Trivy (fails on fixable
    HIGH/CRITICAL), push to `ghcr.io` on `main`, tagged with the commit SHA
-3. **e2e**: create a kind cluster, install Postgres and the chart, add a target
-   through the API and wait until the worker reports it up
+3. **e2e**: create a kind cluster, install Postgres and the chart with one git
+   target, add one target through the API and wait until the worker reports
+   both up
 
 ## Design decisions
 
@@ -286,10 +326,11 @@ the stack's own `AlertmanagerClusterFailedToSendAlerts` alert reports.
 ## Layout
 
 ```
-cmd/uptime-watch/        commands: serve, worker, check, migrate, prune
+cmd/uptime-watch/        commands: serve, worker, check, migrate, prune, sync-targets
 internal/checker/        one HTTP check with a timeout; the up/down rule
 internal/store/          Postgres: targets, checks, claiming, migrations (embedded)
 internal/worker/         check loop, concurrency limit, graceful stop
+internal/targetsfile/    reads and checks the targets file from git
 internal/api/            handlers, status page template, admin token
 internal/metrics/        Prometheus metrics and the status collector
 internal/config/         environment variables

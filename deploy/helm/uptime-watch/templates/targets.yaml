@@ -1,0 +1,55 @@
+{{- if .Values.gitTargets.enabled }}
+# Targets as code: the list in values becomes a file in this ConfigMap, and
+# the Job below makes the database match it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-targets
+  labels:
+    {{- include "uw.labels" . | nindent 4 }}
+data:
+  targets.json: |
+    {{- dict "targets" .Values.gitTargets.targets | toPrettyJson | nindent 4 }}
+---
+# post-install/post-upgrade: runs after the release's resources are applied,
+# so the ConfigMap above already holds the new list (and migrate has run).
+# Argo CD runs it as a PostSync hook. A failed sync shows as a failed sync
+# in Argo CD; the app keeps running with the targets it had.
+# Only before-hook-creation: the last finished Job stays until the next sync,
+# so `kubectl logs job/<release>-sync-targets` shows what it changed.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-sync-targets
+  labels:
+    {{- include "uw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sync-targets
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: uptime-watch
+        app.kubernetes.io/component: sync-targets
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: sync-targets
+          {{- include "uw.container" . | nindent 10 }}
+          args: ["sync-targets", "/etc/uptime-watch/targets.json"]
+          volumeMounts:
+            - name: targets
+              mountPath: /etc/uptime-watch
+              readOnly: true
+      volumes:
+        - name: targets
+          configMap:
+            name: {{ .Release.Name }}-targets
+{{- end }}

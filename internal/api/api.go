@@ -10,7 +10,6 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -105,6 +104,7 @@ type targetJSON struct {
 	IntervalSeconds int        `json:"interval_seconds"`
 	TimeoutMS       int        `json:"timeout_ms"`
 	Enabled         bool       `json:"enabled"`
+	Source          string     `json:"source"`     // "api" or "git"
 	LastCheck       *checkJSON `json:"last_check"` // null until the first check
 	Uptime24h       *float64   `json:"uptime_24h"` // percent; null with no checks in 24h
 }
@@ -125,6 +125,7 @@ func toTargetJSON(ts store.TargetStatus) targetJSON {
 	t := targetJSON{
 		ID: ts.ID, Name: ts.Name, URL: ts.URL,
 		IntervalSeconds: ts.IntervalSeconds, TimeoutMS: ts.TimeoutMS, Enabled: ts.Enabled,
+		Source: ts.Source,
 	}
 	if ts.LastCheck != nil {
 		c := toCheckJSON(*ts.LastCheck)
@@ -174,15 +175,16 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	req.Name = strings.TrimSpace(req.Name)
-	if msg := validate(req); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
+	nt := store.NewTarget{
+		Name: strings.TrimSpace(req.Name), URL: req.URL,
+		IntervalSeconds: req.IntervalSeconds, TimeoutMS: req.TimeoutMS,
+	}
+	if err := nt.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	t, err := s.store.CreateTarget(r.Context(), store.NewTarget{
-		Name: req.Name, URL: req.URL, IntervalSeconds: req.IntervalSeconds, TimeoutMS: req.TimeoutMS,
-	})
+	t, err := s.store.CreateTarget(r.Context(), nt)
 	switch {
 	case errors.Is(err, store.ErrDuplicateName):
 		writeError(w, http.StatusConflict, err.Error())
@@ -197,22 +199,6 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 
 	s.log.Info("target created", "id", t.ID, "name", t.Name, "url", t.URL)
 	writeJSON(w, http.StatusCreated, toTargetJSON(store.TargetStatus{Target: t}))
-}
-
-// validate checks what the database cannot: the shape of the name and URL.
-// Interval and timeout rules live in the database (CHECK constraints).
-func validate(req createRequest) string {
-	if req.Name == "" || len(req.Name) > 100 {
-		return "name is required and must be at most 100 characters"
-	}
-	u, err := url.Parse(req.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "url must be an absolute http:// or https:// URL"
-	}
-	if req.IntervalSeconds < 0 || req.TimeoutMS < 0 {
-		return "interval_seconds and timeout_ms cannot be negative"
-	}
-	return ""
 }
 
 func (s *Server) deleteTarget(w http.ResponseWriter, r *http.Request) {

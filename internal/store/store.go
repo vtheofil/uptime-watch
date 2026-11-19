@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -25,6 +26,12 @@ var migrations embed.FS
 const (
 	DefaultIntervalSeconds = 60
 	DefaultTimeoutMS       = 5000
+)
+
+// Where a target came from (the source column).
+const (
+	SourceAPI = "api" // added with POST /api/targets
+	SourceGit = "git" // listed in the targets file; owned by SyncGitTargets
 )
 
 var (
@@ -85,6 +92,7 @@ type Target struct {
 	Enabled         bool      `db:"enabled"`
 	NextCheckAt     time.Time `db:"next_check_at"`
 	CreatedAt       time.Time `db:"created_at"`
+	Source          string    `db:"source"` // SourceAPI or SourceGit
 }
 
 type NewTarget struct {
@@ -94,14 +102,35 @@ type NewTarget struct {
 	TimeoutMS       int // 0 means DefaultTimeoutMS
 }
 
-func (s *Store) CreateTarget(ctx context.Context, nt NewTarget) (Target, error) {
+// Validate checks what the database cannot: the shape of the name and URL.
+// Interval and timeout ranges live in the database (CHECK constraints).
+// Both the API and the targets file use it, so the rules are the same.
+func (nt NewTarget) Validate() error {
+	if nt.Name == "" || len(nt.Name) > 100 {
+		return fmt.Errorf("%w: name is required and must be at most 100 characters", ErrInvalidTarget)
+	}
+	u, err := url.Parse(nt.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("%w: url must be an absolute http:// or https:// URL", ErrInvalidTarget)
+	}
+	if nt.IntervalSeconds < 0 || nt.TimeoutMS < 0 {
+		return fmt.Errorf("%w: interval_seconds and timeout_ms cannot be negative", ErrInvalidTarget)
+	}
+	return nil
+}
+
+func (nt NewTarget) withDefaults() NewTarget {
 	if nt.IntervalSeconds == 0 {
 		nt.IntervalSeconds = DefaultIntervalSeconds
 	}
 	if nt.TimeoutMS == 0 {
 		nt.TimeoutMS = DefaultTimeoutMS
 	}
+	return nt
+}
 
+func (s *Store) CreateTarget(ctx context.Context, nt NewTarget) (Target, error) {
+	nt = nt.withDefaults()
 	rows, _ := s.pool.Query(ctx, `
 		INSERT INTO targets (name, url, interval_seconds, timeout_ms)
 		VALUES ($1, $2, $3, $4)
@@ -129,6 +158,92 @@ func (s *Store) DeleteTarget(ctx context.Context, id int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SyncResult says what SyncGitTargets changed, by target name.
+type SyncResult struct {
+	Created   []string // new targets
+	Updated   []string // git targets whose url, interval or timeout changed
+	Adopted   []string // API targets that the file now lists: they become git targets and keep their checks
+	Deleted   []string // git targets no longer in the file, with their checks
+	Unchanged int
+}
+
+// SyncGitTargets makes the git targets match want. It runs in one
+// transaction, so either the whole list applies or nothing does: a bad entry
+// leaves the database as it was. Targets added through the API are never
+// deleted; if want lists one by name, git takes it over (Adopted).
+func (s *Store) SyncGitTargets(ctx context.Context, want []NewTarget) (SyncResult, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	defer tx.Rollback(ctx) // undoes everything on an early return; does nothing after Commit
+
+	// FOR UPDATE locks the rows we read until the commit, so the API cannot
+	// change or delete one of them between our read and our write.
+	rows, _ := tx.Query(ctx, `SELECT * FROM targets ORDER BY name FOR UPDATE`)
+	current, err := pgx.CollectRows(rows, pgx.RowToStructByName[Target])
+	if err != nil {
+		return SyncResult{}, err
+	}
+	byName := make(map[string]Target, len(current))
+	for _, t := range current {
+		byName[t.Name] = t
+	}
+
+	var res SyncResult
+	listed := make(map[string]bool, len(want))
+	for _, nt := range want {
+		nt = nt.withDefaults()
+		listed[nt.Name] = true
+		cur, exists := byName[nt.Name]
+
+		switch {
+		case !exists:
+			_, err = tx.Exec(ctx, `
+				INSERT INTO targets (name, url, interval_seconds, timeout_ms, source)
+				VALUES ($1, $2, $3, $4, 'git')`,
+				nt.Name, nt.URL, nt.IntervalSeconds, nt.TimeoutMS)
+			res.Created = append(res.Created, nt.Name)
+		case cur.Source == SourceGit && cur.URL == nt.URL &&
+			cur.IntervalSeconds == nt.IntervalSeconds && cur.TimeoutMS == nt.TimeoutMS:
+			res.Unchanged++
+		default:
+			// Same id, so the checks stay attached. enabled is not touched.
+			_, err = tx.Exec(ctx, `
+				UPDATE targets
+				SET    url = $2, interval_seconds = $3, timeout_ms = $4, source = 'git'
+				WHERE  id = $1`,
+				cur.ID, nt.URL, nt.IntervalSeconds, nt.TimeoutMS)
+			if cur.Source == SourceGit {
+				res.Updated = append(res.Updated, nt.Name)
+			} else {
+				res.Adopted = append(res.Adopted, nt.Name)
+			}
+		}
+		if err != nil {
+			return SyncResult{}, fmt.Errorf("target %q: %w", nt.Name, translate(err))
+		}
+	}
+
+	var stale []int64
+	for _, t := range current {
+		if t.Source == SourceGit && !listed[t.Name] {
+			stale = append(stale, t.ID)
+			res.Deleted = append(res.Deleted, t.Name)
+		}
+	}
+	if len(stale) > 0 {
+		if _, err := tx.Exec(ctx, `DELETE FROM targets WHERE id = ANY($1)`, stale); err != nil {
+			return SyncResult{}, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return SyncResult{}, err
+	}
+	return res, nil
 }
 
 // DueTarget is what the worker needs to run one check.
@@ -235,7 +350,7 @@ type TargetStatus struct {
 func (s *Store) ListStatus(ctx context.Context) ([]TargetStatus, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.id, t.name, t.url, t.interval_seconds, t.timeout_ms, t.enabled,
-		       t.next_check_at, t.created_at,
+		       t.next_check_at, t.created_at, t.source,
 		       l.checked_at, l.ok, l.status_code, l.latency_ms, l.error,
 		       d.total, d.up
 		FROM targets t
@@ -268,7 +383,7 @@ func (s *Store) ListStatus(ctx context.Context) ([]TargetStatus, error) {
 		)
 		err := row.Scan(
 			&ts.ID, &ts.Name, &ts.URL, &ts.IntervalSeconds, &ts.TimeoutMS, &ts.Enabled,
-			&ts.NextCheckAt, &ts.CreatedAt,
+			&ts.NextCheckAt, &ts.CreatedAt, &ts.Source,
 			&checkedAt, &ok, &status, &latency, &errText,
 			&ts.Checks24h, &ts.Up24h,
 		)
@@ -292,6 +407,7 @@ var constraintMessages = map[string]string{
 	"targets_interval_seconds_check": "interval_seconds must be at least 10",
 	"targets_timeout_ms_check":       "timeout_ms must be between 100 and 30000",
 	"timeout_below_interval":         "timeout_ms must be shorter than interval_seconds",
+	"targets_source_check":           "source must be api or git",
 }
 
 // translate turns Postgres constraint errors into errors the API can act on.

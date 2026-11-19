@@ -1,11 +1,20 @@
 # uptime-watch
 
+[![ci](https://github.com/vtheofil/uptime-watch/actions/workflows/ci.yaml/badge.svg)](https://github.com/vtheofil/uptime-watch/actions/workflows/ci.yaml)
+![Go 1.27](https://img.shields.io/badge/go-1.27-00ADD8)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 An uptime monitor written in Go and run the way production services are run:
 container image built and scanned in CI, deployed to Kubernetes with Helm and
 Argo CD, observed with Prometheus, Grafana and Alertmanager.
 
 It checks a list of URLs on a schedule, stores every result in Postgres, shows
-a status page, exposes a JSON API and exports metrics that drive alerts.
+a status page, exposes a JSON API and exports metrics that drive alerts, which
+reach you in Discord when a site goes down and again when it recovers.
+
+| Status page | Grafana dashboard |
+|---|---|
+| ![Status page with one target down](docs/images/status-page.jpg) | ![Grafana dashboard: up/down timeline per target, with a short outage of demo-site](docs/images/grafana.jpg) |
 
 ```
             ┌──────────────┐  claim due targets   ┌──────────┐
@@ -44,14 +53,16 @@ a status page, exposes a JSON API and exports metrics that drive alerts.
 
 ## Quick start
 
-Requirements: Go 1.27, Docker.
+Requirements: Go 1.27, Docker and `make`. `make help` lists every command.
 
 ```bash
+git clone https://github.com/vtheofil/uptime-watch.git && cd uptime-watch
 make db        # Postgres in Docker (port 5433) + migrations
 make run       # serve on :8080 and worker on :8081; Ctrl+C stops both
 ```
 
-Add a target and open <http://localhost:8080>:
+`make run` sets the admin token to `dev-token`. Add a target and open
+<http://localhost:8080>:
 
 ```bash
 curl -X POST localhost:8080/api/targets \
@@ -119,18 +130,46 @@ several workers, each one only sees the targets it checked.
 
 ### kind + Helm
 
+Extra requirements: [kind](https://kind.sigs.k8s.io/), `kubectl` and `helm`.
+
 ```bash
-make kind-up        # a kind cluster with its own kubeconfig in .kube/ (your contexts stay untouched)
-make kind-deploy    # build the image, load it, install Postgres + the chart, run the e2e smoke test
-./deploy/monitoring/install.sh   # Prometheus, Grafana, Alertmanager (kube-prometheus-stack)
-make kind-ports     # status page, Prometheus, Grafana, Alertmanager and Argo CD on localhost
+make kind-up          # a kind cluster with its own kubeconfig in .kube/ (your contexts stay untouched)
+make kind-monitoring  # Prometheus, Grafana, Alertmanager (kube-prometheus-stack), ~5 minutes
+make kind-deploy      # build the image, load it, install Postgres + the chart, run the e2e smoke test
+make kind-ports       # open every UI on localhost (Ctrl+C closes them)
 ```
 
-Every `make kind-*` target uses the kind kubeconfig, whatever your shell has
-set, so it cannot reach another cluster by mistake.
+| UI | Address | Login |
+|---|---|---|
+| Status page | <http://localhost:18080> | – |
+| Prometheus | <http://localhost:9090> | – |
+| Grafana | <http://localhost:3000> | `admin` / `admin` on first login |
+| Alertmanager | <http://localhost:9093> | – |
+| Argo CD | <https://localhost:8443> | `admin` / `make kind-argocd-password` |
 
-To see the dashboard and alerts, upgrade the release with
-`--set metrics.serviceMonitor.enabled=true --set metrics.prometheusRule.enabled=true --set metrics.dashboard.enabled=true`.
+Every `make kind-*` target uses the kind kubeconfig, whatever your shell has
+set, so it cannot reach another cluster by mistake. `make kind-deploy` turns on
+the ServiceMonitor, alert rules and dashboard by itself when the monitoring
+stack is installed. `make kind-down` deletes the cluster.
+
+#### Watch an alert fire
+
+Start a small web server in the cluster, monitor it, then take it down:
+
+```bash
+alias k="kubectl --kubeconfig $PWD/.kube/kind-uptime-watch.yaml"
+k -n uptime-watch create deployment demo-site --image=nginx:alpine
+k -n uptime-watch expose deployment demo-site --port 80
+curl -X POST localhost:18080/api/targets -H "Authorization: Bearer $(make -s kind-token)" \
+  -d '{"name":"demo-site","url":"http://demo-site.uptime-watch.svc","interval_seconds":10}'
+
+k -n uptime-watch scale deployment demo-site --replicas=0   # the site goes down
+```
+
+About 10 seconds later the status page shows it down; `TargetDown` turns
+pending in Prometheus, firing after 2 minutes, and reaches Alertmanager (and
+Discord, see [Notifications](#notifications)) 30 seconds after that. Scale it
+back to 1 and the alert resolves.
 
 The chart (`deploy/helm/uptime-watch`) installs:
 
@@ -162,6 +201,17 @@ with sync waves:
 ```bash
 ./deploy/argocd/bootstrap.sh   # installs Argo CD, creates the Secrets, applies the root app
 ```
+
+Before you run it:
+
+- Use a fresh cluster (`make kind-up` only). Argo CD installs Postgres, the
+  monitoring stack and the app itself; mixing it with `make kind-deploy` gives
+  two owners for the same resources.
+- The image must be pullable: CI pushes it to `ghcr.io` from `main`. GHCR
+  packages start private, so make the package public (package settings) or
+  add an image pull secret.
+- Argo CD reads this repository, so a fork needs its own URL in
+  `deploy/argocd/root.yaml` and `deploy/argocd/apps/*.yaml`.
 
 Deploying a new version means changing `image.tag` in
 `deploy/argocd/apps/uptime-watch.yaml` to a commit SHA pushed by CI.
@@ -219,6 +269,15 @@ the stack's own `AlertmanagerClusterFailedToSendAlerts` alert reports.
   `html/template`; external modules are only `pgx`, `goose`,
   `prometheus/client_golang`, and `testcontainers-go` for tests.
 
+## Ideas for later
+
+- Show TLS certificate expiry and alert a few days before it.
+- Check that a page contains a word, to catch "200 with an error page".
+- A page per target with its response-time history and an add-target form.
+- Run checks from two regions, to tell "the site is down" from "our network is".
+- Postgres through an operator (CloudNativePG) with backups, instead of a
+  plain StatefulSet.
+
 ## Layout
 
 ```
@@ -234,4 +293,5 @@ deploy/helm/             Helm chart
 deploy/kind/             kind cluster, development Postgres, e2e script
 deploy/monitoring/       kube-prometheus-stack values
 deploy/argocd/           Argo CD root app and Applications
+docs/images/             screenshots for this README
 ```

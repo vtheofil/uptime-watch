@@ -59,8 +59,9 @@ kubectl apply -f "$HERE/root.yaml"
 
 cat <<'EOF'
 
-Argo CD is syncing from GitHub. To follow it:
-  make kind-urls              # every UI, once Traefik is up (a few minutes)
+Argo CD is syncing from GitHub (5 to 10 minutes on a fresh cluster). Next:
+  make kind-discord-secret    # any time, before or after monitoring; no restart needed
+  make kind-urls              # every UI, once Traefik is up
   make kind-argocd-password   # user: admin
 Before Traefik is up, `make kind-ports` reaches Argo CD on http://localhost:8443.
 EOF

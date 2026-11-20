@@ -19,3 +19,15 @@ spec:
     automated:
       prune: true    # an Application removed from git is removed from the cluster
       selfHeal: true # a change made by hand with kubectl is put back to what git says
+    # Each wave waits until the Applications before it are healthy. On a fresh
+    # cluster Prometheus and Alertmanager need a few minutes to pull images
+    # and start, and meanwhile Argo CD reports them Degraded, which fails the
+    # wait. The default retries run out before that; after that, Argo CD does
+    # not retry the same commit by itself. These outlast a slow start (waits of
+    # 30s, 1m, 2m, 4m, then 5m each: about 37 minutes in total).
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

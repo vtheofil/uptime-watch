@@ -311,7 +311,10 @@ make kind-discord-secret   # asks for the webhook URL without echoing it, stores
 ```
 
 Without that Secret, Alertmanager still runs and the Discord sends fail, which
-the stack's own `AlertmanagerClusterFailedToSendAlerts` alert reports.
+the stack's own `AlertmanagerClusterFailedToSendAlerts` alert reports. The
+Secret can be created at any time, before or after the monitoring stack: the
+kubelet adds it to the running pod within a minute or two (its sync period),
+and Alertmanager reads the file on every send, so no restart is needed.
 
 ## CI
 

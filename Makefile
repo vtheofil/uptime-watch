@@ -95,15 +95,26 @@ kind-ports: ## open every UI of the kind cluster on localhost (Ctrl+C closes the
 	kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090 >/dev/null & \
 	kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80 >/dev/null & \
 	kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-alertmanager 9093:9093 >/dev/null & \
-	kubectl -n argocd port-forward svc/argocd-server 8443:443 >/dev/null & \
+	kubectl -n argocd port-forward svc/argocd-server 8443:80 >/dev/null & \
 	sleep 2; \
 	echo "status page   http://localhost:18080"; \
 	echo "Prometheus    http://localhost:9090"; \
 	echo "Grafana       http://localhost:3000   (admin; password admin on first login)"; \
 	echo "Alertmanager  http://localhost:9093"; \
-	echo "Argo CD       https://localhost:8443  (admin / make kind-argocd-password)"; \
+	echo "Argo CD       http://localhost:8443   (admin / make kind-argocd-password)"; \
 	echo "Ctrl+C closes them all"; \
 	wait
+
+# With Argo CD, Traefik serves every UI on localhost:8000, routed by host name
+# (*.localhost names point at this machine). No port-forward, so a rollout
+# does not break them.
+.PHONY: kind-urls
+kind-urls: ## list the UIs served through Traefik (after make kind-argocd)
+	@echo "status page   http://status.localhost:8000"
+	@echo "Prometheus    http://prometheus.localhost:8000"
+	@echo "Grafana       http://grafana.localhost:8000   (admin; password admin on first login)"
+	@echo "Alertmanager  http://alertmanager.localhost:8000"
+	@echo "Argo CD       http://argocd.localhost:8000    (admin / make kind-argocd-password)"
 
 .PHONY: kind-argocd-password
 kind-argocd-password: ## print the Argo CD admin password

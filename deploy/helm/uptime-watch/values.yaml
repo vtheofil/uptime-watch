@@ -32,6 +32,16 @@ worker:
     requests: { cpu: 25m, memory: 32Mi }
     limits: { memory: 128Mi }
 
+# Expose the status page and API through a Gateway API Gateway. Needs the
+# Gateway API CRDs and a controller (Traefik on kind, see deploy/traefik).
+httpRoute:
+  enabled: false
+  hostnames: []
+  # - status.localhost
+  parentRefs: []
+  # - name: web
+  #   namespace: traefik
+
 migrations:
   # Runs `uptime-watch migrate` as a Job before every install and upgrade.
   enabled: true

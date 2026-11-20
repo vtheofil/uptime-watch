@@ -145,7 +145,7 @@ make kind-ports       # open every UI on localhost (Ctrl+C closes them)
 | Prometheus | <http://localhost:9090> | – |
 | Grafana | <http://localhost:3000> | `admin` / `admin` on first login |
 | Alertmanager | <http://localhost:9093> | – |
-| Argo CD | <https://localhost:8443> | `admin` / `make kind-argocd-password` |
+| Argo CD | <http://localhost:8443> | `admin` / `make kind-argocd-password` |
 
 Every `make kind-*` target uses the kind kubeconfig, whatever your shell has
 set, so it cannot reach another cluster by mistake. `make kind-deploy` turns on
@@ -181,6 +181,7 @@ The chart (`deploy/helm/uptime-watch`) installs:
 - `prune` CronJob (daily, `concurrencyPolicy: Forbid`)
 - optional `sync-targets` Job and its ConfigMap (see [Targets as code](#targets-as-code))
 - optional ServiceMonitor, PrometheusRule and Grafana dashboard
+- optional Gateway API `HTTPRoute` (`httpRoute` values)
 - pods run as non-root with a read-only root filesystem, no capabilities and
   the default seccomp profile
 
@@ -195,9 +196,12 @@ with sync waves:
 
 | Wave | Application | Source |
 |---|---|---|
+| -3 | `gateway-api` | Gateway API CRDs v1.6.3 from `kubernetes-sigs/gateway-api` |
+| -2 | `traefik` | Traefik chart + `deploy/traefik/values.yaml` |
 | -1 | `monitoring` | kube-prometheus-stack chart + `deploy/monitoring/values.yaml` |
 | 0 | `postgres` | `deploy/kind/postgres.yaml` |
 | 1 | `uptime-watch` | `deploy/helm/uptime-watch` |
+| 2 | `routes` | `deploy/routes/`: HTTPRoutes for Grafana, Prometheus, Alertmanager, Argo CD |
 
 ```bash
 make kind-argocd   # installs Argo CD, creates the Secrets, applies the root app
@@ -218,6 +222,32 @@ Before you run it:
   add an image pull secret.
 - Argo CD reads this repository, so a fork needs its own URL in
   `deploy/argocd/root.yaml` and `deploy/argocd/apps/*.yaml`.
+
+#### Every UI through Traefik
+
+With Argo CD, Traefik is the cluster's entry point. It implements the
+[Gateway API](https://gateway-api.sigs.k8s.io/): the chart creates a `Gateway`,
+and each component adds an `HTTPRoute` for its host name. The kind node
+publishes Traefik's NodePort (30080) on `localhost:8000` (`extraPortMappings`
+in `deploy/kind/cluster.yaml`, so the cluster must be created with it), and
+`*.localhost` names resolve to this machine:
+
+```bash
+make kind-urls
+```
+
+| UI | Address |
+|---|---|
+| Status page | <http://status.localhost:8000> |
+| Prometheus | <http://prometheus.localhost:8000> |
+| Grafana | <http://grafana.localhost:8000> |
+| Alertmanager | <http://alertmanager.localhost:8000> |
+| Argo CD | <http://argocd.localhost:8000> |
+
+Unlike `kubectl port-forward`, which is tied to one pod and breaks when a
+rollout replaces it, Traefik sends each request to a ready pod behind the
+Service. It is plain HTTP on 127.0.0.1 only: fine for a laptop, not for
+anything shared.
 
 Deploying a new version means changing `image.tag` in
 `deploy/argocd/apps/uptime-watch.yaml` to a commit SHA pushed by CI.
@@ -338,6 +368,8 @@ internal/testdb/         real Postgres in Docker for tests
 deploy/helm/             Helm chart
 deploy/kind/             kind cluster, development Postgres, e2e script
 deploy/monitoring/       kube-prometheus-stack values
+deploy/traefik/          Traefik values (Gateway API controller)
+deploy/routes/           HTTPRoutes for the platform UIs
 deploy/argocd/           Argo CD root app and Applications
 docs/images/             screenshots for this README
 ```

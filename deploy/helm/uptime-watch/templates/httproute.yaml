@@ -1,0 +1,20 @@
+{{- if .Values.httpRoute.enabled }}
+# Gateway API route: requests for these host names, arriving at the Gateway
+# in parentRefs, go to the API Service. The Gateway's controller (Traefik on
+# kind) sends them to the Service's ready pods, so a rollout does not break it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "uw.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    {{- toYaml .Values.httpRoute.parentRefs | nindent 4 }}
+  hostnames:
+    {{- toYaml .Values.httpRoute.hostnames | nindent 4 }}
+  rules:
+    - backendRefs:
+        - name: {{ .Release.Name }}
+          port: 80
+{{- end }}

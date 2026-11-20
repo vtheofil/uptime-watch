@@ -31,6 +31,12 @@ kubectl apply -n argocd --server-side --force-conflicts \
 # wave -1 (monitoring, which brings the CRDs) is done before wave 1 starts.
 kubectl -n argocd patch configmap argocd-cm --type merge -p '{"data":{"resource.customizations.health.argoproj.io_Application":"hs = {}\nhs.status = \"Progressing\"\nhs.message = \"\"\nif obj.status ~= nil and obj.status.health ~= nil then\n  hs.status = obj.status.health.status\n  if obj.status.health.message ~= nil then\n    hs.message = obj.status.health.message\n  end\nend\nreturn hs\n"}}'
 
+# Traefik sends plain HTTP to argocd-server (http://argocd.localhost:8000).
+# Without server.insecure the server redirects every request to HTTPS, which
+# loops. This is for the laptop only: elsewhere, terminate TLS at the Gateway.
+kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge -p '{"data":{"server.insecure":"true"}}'
+kubectl -n argocd rollout restart deploy/argocd-server
+
 kubectl -n argocd rollout status deploy/argocd-server --timeout=5m
 kubectl -n argocd rollout status deploy/argocd-repo-server --timeout=5m
 kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=5m
@@ -54,6 +60,7 @@ kubectl apply -f "$HERE/root.yaml"
 cat <<'EOF'
 
 Argo CD is syncing from GitHub. To follow it:
-  make kind-ports             # Argo CD UI on https://localhost:8443
+  make kind-urls              # every UI, once Traefik is up (a few minutes)
   make kind-argocd-password   # user: admin
+Before Traefik is up, `make kind-ports` reaches Argo CD on http://localhost:8443.
 EOF

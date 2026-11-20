@@ -4,3 +4,13 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: uptime-watch
 nodes:
   - role: control-plane
+    # The kind node is a Docker container. This publishes its port 30080 on
+    # localhost:8000 of this machine. Traefik's Service is a NodePort on
+    # 30080, so http://<name>.localhost:8000 reaches Traefik, which routes by
+    # host name. Port mappings can only be set when the cluster is created.
+    # 127.0.0.1 keeps the cluster off the local network.
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8000
+        listenAddress: "127.0.0.1"
+        protocol: TCP

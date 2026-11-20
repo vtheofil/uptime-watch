@@ -10,11 +10,15 @@ prometheus:
     ruleSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false
     retention: 2d
+    # The address people use (through Traefik). Links in alerts, such as
+    # "Source" in Alertmanager and Discord, point here.
+    externalUrl: http://prometheus.localhost:8000
     resources:
       requests: { cpu: 100m, memory: 256Mi }
 
 alertmanager:
   alertmanagerSpec:
+    externalUrl: http://alertmanager.localhost:8000
     resources:
       requests: { cpu: 10m, memory: 32Mi }
     # The Discord webhook URL is a secret (anyone with it can post to the

@@ -1,0 +1,33 @@
+# Traefik: the Gateway API controller and the proxy in one pod. Every request
+# from outside the cluster enters through it. Wave -2: after the Gateway API
+# CRDs, before everything that adds an HTTPRoute.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: traefik
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: default
+  sources:
+    - repoURL: https://traefik.github.io/charts
+      chart: traefik
+      targetRevision: 42.4.1 # Traefik v3.7.19
+      helm:
+        releaseName: traefik
+        valueFiles:
+          - $values/deploy/traefik/values.yaml
+    - repoURL: https://github.com/vtheofil/uptime-watch.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: traefik
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true # the chart brings large Traefik CRDs

@@ -54,6 +54,18 @@ if ! kubectl -n "$NS" get secret uptime-watch >/dev/null 2>&1; then
     --from-literal=ADMIN_TOKEN="$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')"
 fi
 
+# External secrets (the Discord webhook) come from OpenBao, which runs outside
+# the cluster. The cluster only needs a token to read them: the one secret
+# that still has to be put in by hand.
+echo "==> OpenBao token for External Secrets"
+source "$HERE/../openbao/lib.sh"
+if openbao_ready; then
+  "$HERE/../openbao/k8s-token.sh"
+else
+  echo "OpenBao is not running or is sealed. The rest works; the 'secrets' app stays"
+  echo "Degraded until you run: make openbao-up && make kind-openbao-token"
+fi
+
 echo "==> root app"
 kubectl apply -f "$HERE/root.yaml"
 

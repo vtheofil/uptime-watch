@@ -197,11 +197,13 @@ with sync waves:
 | Wave | Application | Source |
 |---|---|---|
 | -3 | `gateway-api` | Gateway API CRDs v1.6.3 from `kubernetes-sigs/gateway-api` |
+| -3 | `external-secrets` | External Secrets Operator chart 2.15.0 |
 | -2 | `traefik` | Traefik chart + `deploy/traefik/values.yaml` |
 | -1 | `monitoring` | kube-prometheus-stack chart + `deploy/monitoring/values.yaml` |
 | 0 | `postgres` | `deploy/kind/postgres.yaml` |
 | 1 | `uptime-watch` | `deploy/helm/uptime-watch` |
 | 2 | `routes` | `deploy/routes/`: HTTPRoutes for Grafana, Prometheus, Alertmanager, Argo CD |
+| 3 | `secrets` | `deploy/secrets/`: secrets copied from OpenBao (last, so a missing one blocks nothing) |
 
 ```bash
 make kind-argocd   # installs Argo CD, creates the Secrets, applies the root app
@@ -304,14 +306,55 @@ DATABASE_URL='postgres://uptime:uptime@localhost:5433/uptime?sslmode=disable' \
 Alertmanager sends the alerts of the `uptime-watch` namespace, and every
 `critical` alert of the cluster, to a Discord channel, including a message when
 they resolve. Alerts are grouped (30 s), and a still-firing alert is repeated
-every 4 hours. The webhook URL is a secret, so it is not in git:
-
-```bash
-make kind-discord-secret   # asks for the webhook URL without echoing it, stores it as a Secret
-```
+every 4 hours. The webhook URL is a secret, so it is not in git: it lives in
+OpenBao (next section), which External Secrets copies into the Secret
+`monitoring/alertmanager-discord`.
 
 Without that Secret, Alertmanager still runs and the Discord sends fail, which
-the stack's own `AlertmanagerClusterFailedToSendAlerts` alert reports.
+the stack's own `AlertmanagerClusterFailedToSendAlerts` alert reports. When the
+Secret appears, the kubelet adds it to the running pod within a minute or two,
+and Alertmanager reads the file on every send: no restart.
+
+### Secrets from OpenBao
+
+Generated secrets (the Postgres password, `ADMIN_TOKEN`) are made by
+`bootstrap.sh` and die with the cluster, like the database. Secrets that come
+from outside, like the Discord webhook, must survive a rebuild, so they live in
+[OpenBao](https://openbao.org/) (the open-source fork of HashiCorp Vault),
+which runs next to kind as a Docker container, not inside it:
+
+```
+OpenBao (Docker, kind network) ──► External Secrets Operator (in kind) ──► Secret alertmanager-discord ──► Alertmanager
+   secret/uptime-watch/discord        ClusterSecretStore + ExternalSecret      (refreshed every 15 min)
+```
+
+```bash
+make kind-up
+make openbao-up        # starts OpenBao; the first time it also initialises it, then it unseals it
+make openbao-discord   # first time only: asks for the webhook URL (hidden) and stores it in OpenBao
+make kind-argocd       # also gives the cluster a read-only OpenBao token
+```
+
+After that, a rebuild (`make kind-down && make kind-up && make openbao-up &&
+make kind-argocd`) brings the webhook back by itself.
+
+- `make openbao-up` saves the unseal key and the root token to
+  `~/.config/uptime-watch/openbao-init.json` (mode 600, outside the repo). Lose
+  it and the secrets cannot be opened again. OpenBao starts sealed after every
+  restart; `make openbao-up` unseals it. The UI is on <http://127.0.0.1:8200/ui>.
+- The cluster reads OpenBao with a token that can only read
+  `secret/uptime-watch/*` (policy `deploy/openbao/uptime-watch-read.hcl`),
+  stored as `external-secrets/openbao-token`. That token is the one secret put
+  into a new cluster by hand ("secret zero"). It lasts 32 days; a rebuild or
+  `make kind-openbao-token` makes a new one. OpenBao's Kubernetes auth would
+  remove even that token: a next step.
+- A new value in OpenBao reaches the cluster within 15 minutes, or at once with
+  `make kind-refresh-secrets`.
+- For a laptop, OpenBao runs with one unseal key, plain HTTP on 127.0.0.1 and a
+  root token in a file. In production: split or KMS-managed unseal keys, TLS,
+  and no root token after setup.
+- `make kind-discord-secret` still sets the Secret by hand, for a cluster
+  without OpenBao. Do not use both: the ExternalSecret owns that Secret.
 
 ## CI
 
@@ -370,6 +413,8 @@ deploy/kind/             kind cluster, development Postgres, e2e script
 deploy/monitoring/       kube-prometheus-stack values
 deploy/traefik/          Traefik values (Gateway API controller)
 deploy/routes/           HTTPRoutes for the platform UIs
+deploy/openbao/          OpenBao next to kind: compose file, config, setup scripts
+deploy/secrets/          ClusterSecretStore and ExternalSecrets (from OpenBao)
 deploy/argocd/           Argo CD root app and Applications
 docs/images/             screenshots for this README
 ```

@@ -1,0 +1,29 @@
+# OpenBao, the open-source fork of HashiCorp Vault, keeps the secrets that
+# cannot be generated, such as the Discord webhook URL. It runs here, outside
+# the kind cluster, so its secrets survive `make kind-down`. It joins kind's
+# Docker network, where pods reach it as http://uptime-watch-openbao:8200, and
+# publishes its API and UI on http://127.0.0.1:8200 for this machine only.
+#
+# Use `make openbao-up` (after `make kind-up`, which creates the network):
+# it starts this, initialises OpenBao once and unseals it.
+name: uptime-watch-openbao
+
+services:
+  openbao:
+    image: quay.io/openbao/openbao:2.7.3
+    container_name: ${OPENBAO_NAME:-uptime-watch-openbao}
+    command: server
+    restart: unless-stopped # comes back after a reboot, but sealed: run make openbao-up
+    ports:
+      - "127.0.0.1:${OPENBAO_PORT:-8200}:8200"
+    volumes:
+      - ./config.hcl:/openbao/config/config.hcl:ro
+      - data:/openbao/file
+    networks: [kind]
+
+networks:
+  kind:
+    external: true # created by kind; OpenBao only joins it
+
+volumes:
+  data: # the encrypted secrets; `docker compose down -v` deletes them for good

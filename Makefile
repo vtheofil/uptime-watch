@@ -124,6 +124,7 @@ kind-argocd-password: ## print the Argo CD admin password
 kind-discord-secret: ## store your Discord webhook URL in the cluster (asked for, never shown or saved)
 	@read -rsp "Paste the Discord webhook URL (hidden), then Enter: " url; echo; \
 	case "$$url" in https://discord.com/api/webhooks/*) ;; *) echo "that does not look like a Discord webhook URL"; exit 1;; esac; \
+	kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f - >/dev/null; \
 	printf '%s' "$$url" | kubectl -n monitoring create secret generic alertmanager-discord \
 	  --from-file=webhook-url=/dev/stdin --dry-run=client -o yaml | kubectl apply -f -
 

@@ -1,0 +1,22 @@
+# The platform UIs (Grafana, Prometheus, Alertmanager, Argo CD) on
+# http://<name>.localhost:8000. Wave 2: last, once the namespaces and Services
+# exist. Each route in deploy/routes/ names its own namespace.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: routes
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vtheofil/uptime-watch.git
+    targetRevision: main
+    path: deploy/routes
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

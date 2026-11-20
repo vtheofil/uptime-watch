@@ -1,0 +1,38 @@
+# Traefik chart values for the kind cluster, used by
+# deploy/argocd/apps/traefik.yaml.
+
+# Read Gateway API objects (Gateway, HTTPRoute). The CRDs come from the
+# gateway-api Application. Ingress objects are not used here.
+providers:
+  kubernetesGateway:
+    enabled: true
+  kubernetesIngress:
+    enabled: false
+
+# The chart creates the GatewayClass "traefik" and one Gateway. Routes from
+# every namespace may attach to it: each app adds its own HTTPRoute.
+gateway:
+  name: web
+  listeners:
+    web:
+      port: 8000 # must be Traefik's "web" entrypoint port below
+      protocol: HTTP
+      namespacePolicy:
+        from: All
+
+# kind has no cloud load balancer, so a LoadBalancer Service would stay
+# <pending>. A NodePort on 30080 instead: deploy/kind/cluster.yaml publishes
+# that port of the kind node on localhost:8000.
+service:
+  spec:
+    type: NodePort
+ports:
+  web:
+    nodePort: 30080
+  websecure:
+    expose:
+      default: false # no TLS on the laptop; one port is enough
+
+resources:
+  requests: { cpu: 25m, memory: 64Mi }
+  limits: { memory: 256Mi }

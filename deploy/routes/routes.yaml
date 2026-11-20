@@ -1,0 +1,49 @@
+# HTTPRoutes for the platform UIs on kind, all through Traefik's Gateway "web".
+# Each route lives in the namespace of its Service: a route may point at a
+# Service in another namespace only with a ReferenceGrant there.
+# The app's own route is in its Helm chart (httpRoute values).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  parentRefs: [{ name: web, namespace: traefik }]
+  hostnames: ["grafana.localhost"]
+  rules:
+    - backendRefs: [{ name: monitoring-grafana, port: 80 }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  parentRefs: [{ name: web, namespace: traefik }]
+  hostnames: ["prometheus.localhost"]
+  rules:
+    - backendRefs: [{ name: monitoring-kube-prometheus-prometheus, port: 9090 }]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: alertmanager
+  namespace: monitoring
+spec:
+  parentRefs: [{ name: web, namespace: traefik }]
+  hostnames: ["alertmanager.localhost"]
+  rules:
+    - backendRefs: [{ name: monitoring-kube-prometheus-alertmanager, port: 9093 }]
+---
+# argocd-server serves plain HTTP on port 80 only with server.insecure=true,
+# which bootstrap.sh sets; otherwise it redirects every request to HTTPS.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  parentRefs: [{ name: web, namespace: traefik }]
+  hostnames: ["argocd.localhost"]
+  rules:
+    - backendRefs: [{ name: argocd-server, port: 80 }]

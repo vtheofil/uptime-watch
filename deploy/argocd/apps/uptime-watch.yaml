@@ -34,6 +34,13 @@ spec:
               interval_seconds: 30
             - name: github
               url: https://github.com
+        # http://status.localhost:8000 through Traefik (deploy/traefik).
+        httpRoute:
+          enabled: true
+          hostnames: ["status.localhost"]
+          parentRefs:
+            - name: web
+              namespace: traefik
         metrics:
           serviceMonitor:
             enabled: true

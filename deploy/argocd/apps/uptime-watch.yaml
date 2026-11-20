@@ -21,7 +21,7 @@ spec:
           repository: ghcr.io/vtheofil/uptime-watch
           # Pin a commit SHA pushed by CI, e.g. "3f2c1d0e...". "latest" is only
           # for the first try: with it, git does not say which version runs.
-          tag: e744b77b22069e260442c788f3401ff525b6f7ae
+          tag: 4b2f6e4ff273a35ba466995fe24e5ea7ce8b9be6
           pullPolicy: IfNotPresent
         # Targets as code: add, change or remove a target here, commit, push.
         # After the sync, the sync-targets Job makes the database match this

@@ -73,6 +73,8 @@ metrics:
   prometheusRule:
     enabled: false
     labels: {}
+    # Each alert's runbook_url is this plus #<alert name in lower case>.
+    runbookBaseURL: https://github.com/vtheofil/uptime-watch/blob/main/docs/runbook.md
   dashboard:
     enabled: false
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -207,6 +208,117 @@ func TestChecksAndDelete(t *testing.T) {
 	}
 	if code, _ := do(t, "DELETE", base+"1", "", token); code != 404 {
 		t.Errorf("second delete: %d, want 404", code)
+	}
+}
+
+// postForm submits the add form like a browser does, without following the
+// redirect, and returns the status, the body and the Location header.
+func postForm(t *testing.T, base string, form url.Values) (int, string, string) {
+	t.Helper()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := client.PostForm(base+"/targets", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b), resp.Header.Get("Location")
+}
+
+func TestAddFormCreatesATargetAndRedirects(t *testing.T) {
+	srv, s := newServer(t, token)
+
+	if code, body := do(t, "GET", srv.URL+"/", "", ""); !strings.Contains(body, `href="/targets/new"`) {
+		t.Errorf("status page (%d) has no link to the form", code)
+	}
+	if code, body := do(t, "GET", srv.URL+"/targets/new", "", ""); code != 200 || !strings.Contains(body, `name="token"`) {
+		t.Errorf("form page: %d, want 200 with a token field", code)
+	}
+
+	code, _, location := postForm(t, srv.URL, url.Values{
+		"name": {" go-dev "}, "url": {"https://go.dev"}, "interval_seconds": {"30"}, "timeout_ms": {""}, "token": {token},
+	})
+	if code != http.StatusSeeOther || location != "/?added=go-dev" {
+		t.Fatalf("post: %d to %q, want 303 to /?added=go-dev", code, location)
+	}
+	list, _ := s.ListTargets(context.Background())
+	if len(list) != 1 || list[0].Name != "go-dev" || list[0].IntervalSeconds != 30 || list[0].TimeoutMS != 5000 || list[0].Source != store.SourceAPI {
+		t.Errorf("stored %+v, want go-dev, interval 30, default timeout, source api", list)
+	}
+	if _, body := do(t, "GET", srv.URL+location, "", ""); !strings.Contains(body, "Added <b>go-dev</b>") {
+		t.Error("the status page does not confirm the new target")
+	}
+	// The note only names targets that exist: a crafted link shows nothing.
+	if _, body := do(t, "GET", srv.URL+"/?added=you+were+hacked", "", ""); strings.Contains(body, "hacked") {
+		t.Error("the status page repeats text from the link")
+	}
+}
+
+func TestAddFormRejectsMistakesAndKeepsWhatWasTyped(t *testing.T) {
+	srv, s := newServer(t, token)
+	_, _ = s.CreateTarget(context.Background(), store.NewTarget{Name: "taken", URL: "https://x.example"})
+
+	good := func() url.Values {
+		return url.Values{"name": {"go-dev"}, "url": {"https://go.dev"}, "token": {token}}
+	}
+	cases := []struct {
+		name   string
+		change func(url.Values)
+		want   int
+		inBody string
+	}{
+		{"wrong token", func(v url.Values) { v.Set("token", "nope") }, 401, "wrong admin token"},
+		{"no token", func(v url.Values) { v.Del("token") }, 401, "wrong admin token"},
+		{"bad url", func(v url.Values) { v.Set("url", "ftp://x.example") }, 400, "http://"},
+		{"interval not a number", func(v url.Values) { v.Set("interval_seconds", "30s") }, 400, "whole numbers"},
+		{"interval too short", func(v url.Values) { v.Set("interval_seconds", "5") }, 400, "at least 10"},
+		{"name taken", func(v url.Values) { v.Set("name", "taken") }, 409, "already exists"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			v := good()
+			c.change(v)
+			code, body, _ := postForm(t, srv.URL, v)
+			if code != c.want || !strings.Contains(body, c.inBody) {
+				t.Errorf("got %d, want %d with %q in the page", code, c.want, c.inBody)
+			}
+			if !strings.Contains(body, `value="https://go.dev"`) && c.name != "bad url" {
+				t.Error("the form lost the URL that was typed")
+			}
+			if strings.Contains(body, token) {
+				t.Error("the admin token was put back into the page")
+			}
+		})
+	}
+	if list, _ := s.ListTargets(context.Background()); len(list) != 1 {
+		t.Errorf("%d targets stored, want only the existing one", len(list))
+	}
+}
+
+func TestAddFormIsOffWithoutAToken(t *testing.T) {
+	srv, s := newServer(t, "")
+	if _, body := do(t, "GET", srv.URL+"/", "", ""); strings.Contains(body, `href="/targets/new"`) {
+		t.Error("the status page links to a form that cannot work")
+	}
+	if _, body := do(t, "GET", srv.URL+"/targets/new", "", ""); !strings.Contains(body, "Adding targets is off") {
+		t.Error("the form page does not say it is off")
+	}
+	code, _, _ := postForm(t, srv.URL, url.Values{"name": {"go-dev"}, "url": {"https://go.dev"}, "token": {""}})
+	if code != 403 {
+		t.Errorf("post with ADMIN_TOKEN unset: %d, want 403", code)
+	}
+	if list, _ := s.ListTargets(context.Background()); len(list) != 0 {
+		t.Errorf("%d targets stored, want 0", len(list))
+	}
+}
+
+func TestAddFormBodyLimit(t *testing.T) {
+	srv, _ := newServer(t, token)
+	big := url.Values{"name": {"big"}, "url": {"https://x.example/" + strings.Repeat("a", 70<<10)}, "token": {token}}
+	if code, _, _ := postForm(t, srv.URL, big); code != 400 {
+		t.Errorf("70 KB form: %d, want 400", code)
 	}
 }
 

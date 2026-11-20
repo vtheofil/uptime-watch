@@ -82,6 +82,7 @@ make test      # unit and integration tests (needs Docker)
 | Method and path | Purpose | Auth |
 |---|---|---|
 | `GET /` | Status page (HTML, refreshes every 30 s) | – |
+| `GET /targets/new`, `POST /targets` | Add-target form (HTML); the admin token is a field of the form | token in the form |
 | `GET /api/targets` | Targets with their latest check and 24 h uptime | – |
 | `POST /api/targets` | Create a target: `name`, `url`, optional `interval_seconds` (≥ 10, default 60) and `timeout_ms` (100–30000, below the interval, default 5000) | Bearer token |
 | `DELETE /api/targets/{id}` | Delete a target and its history | Bearer token |
@@ -92,6 +93,13 @@ make test      # unit and integration tests (needs Docker)
 
 The write endpoints need `Authorization: Bearer $ADMIN_TOKEN`. With
 `ADMIN_TOKEN` unset they are switched off (403), and the server is read-only.
+
+The status page links to an add-target form on its own page (the status page
+reloads every 30 seconds, which would clear a half-filled form). The form
+asks for the admin token in a password field instead of using a login and a
+cookie: the browser stores nothing, and another site cannot submit the form
+for you without knowing the token. After a target is added, the browser is
+redirected to the status page (303), so reloading it does not add it twice.
 
 ## Configuration
 
@@ -351,7 +359,7 @@ and Alertmanager reads the file on every send, so no restart is needed.
 
 - Show TLS certificate expiry and alert a few days before it.
 - Check that a page contains a word, to catch "200 with an error page".
-- A page per target with its response-time history and an add-target form.
+- A page per target with its response-time history, and deleting API targets from the page.
 - Run checks from two regions, to tell "the site is down" from "our network is".
 - Postgres through an operator (CloudNativePG) with backups, instead of a
   plain StatefulSet.

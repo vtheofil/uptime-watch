@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add a target · uptime-watch</title>
+{{template "style"}}
+</head>
+<body>
+<main>
+  <header>
+    <h1>Add a target</h1>
+    <a class="muted" href="/">Back to the status page</a>
+  </header>
+  {{with .Error}}<p class="note err" role="alert">{{.}}</p>{{end}}
+  <div class="box">
+  {{if .FormOn}}
+    <form method="post" action="/targets">
+      <label>Name
+        <input name="name" required maxlength="100" value="{{.Form.Name}}" autofocus>
+      </label>
+      <label>URL
+        <input name="url" type="url" required placeholder="https://example.com" value="{{.Form.URL}}">
+      </label>
+      <div class="row">
+        <label>Interval <small>seconds, at least 10 · empty: 60</small>
+          <input name="interval_seconds" inputmode="numeric" placeholder="60" value="{{.Form.Interval}}">
+        </label>
+        <label>Timeout <small>ms, below the interval · empty: 5000</small>
+          <input name="timeout_ms" inputmode="numeric" placeholder="5000" value="{{.Form.Timeout}}">
+        </label>
+      </div>
+      <label>Admin token
+        <input name="token" type="password" required autocomplete="current-password">
+      </label>
+      <button type="submit">Add target</button>
+    </form>
+  {{else}}
+    <p class="empty">Adding targets is off: set <code>ADMIN_TOKEN</code> to turn it on.</p>
+  {{end}}
+  </div>
+  <p class="muted">Targets added here live only in the database: a new cluster starts without them.
+  Targets that must always exist belong in git (<code>gitTargets</code> in the Helm values).</p>
+</main>
+</body>
+</html>

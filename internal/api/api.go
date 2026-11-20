@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -18,14 +19,14 @@ import (
 	"github.com/vtheofil/uptime-watch/internal/store"
 )
 
-//go:embed templates/status.html
+//go:embed templates/*.html
 var templates embed.FS
 
 type Server struct {
 	store      *store.Store
 	adminToken string
 	log        *slog.Logger
-	page       *template.Template
+	pages      *template.Template // status.html, add.html and the shared style
 	draining   atomic.Bool
 }
 
@@ -35,12 +36,12 @@ func (s *Server) SetDraining() { s.draining.Store(true) }
 
 // New builds the server. An empty adminToken turns the write endpoints off.
 func New(s *store.Store, adminToken string, log *slog.Logger) *Server {
-	page := template.Must(template.New("status.html").Funcs(template.FuncMap{
+	pages := template.Must(template.New("").Funcs(template.FuncMap{
 		"ago":    ago,
 		"uptime": uptimePercent,
-	}).ParseFS(templates, "templates/status.html"))
+	}).ParseFS(templates, "templates/*.html"))
 
-	return &Server{store: s, adminToken: adminToken, log: log, page: page}
+	return &Server{store: s, adminToken: adminToken, log: log, pages: pages}
 }
 
 // Routes returns the router. Go 1.22+ patterns carry the method and {wildcards}.
@@ -53,6 +54,8 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/targets", s.requireToken(s.createTarget))
 	mux.HandleFunc("DELETE /api/targets/{id}", s.requireToken(s.deleteTarget))
 	mux.HandleFunc("GET /api/targets/{id}/checks", s.listChecks)
+	mux.HandleFunc("GET /targets/new", s.newTargetPage) // the add form (HTML)
+	mux.HandleFunc("POST /targets", s.addTargetForm)    // the form posts here
 	return mux
 }
 
@@ -85,14 +88,19 @@ func (s *Server) requireToken(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		got, found := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		// ConstantTimeCompare takes the same time whatever the input, so an
-		// attacker cannot guess the token one character at a time by timing.
-		if !found || subtle.ConstantTimeCompare([]byte(got), []byte(s.adminToken)) != 1 {
+		if !found || !s.tokenOK(got) {
 			writeError(w, http.StatusUnauthorized, "missing or wrong admin token")
 			return
 		}
 		next(w, r)
 	}
+}
+
+// tokenOK reports whether got is the admin token. ConstantTimeCompare takes
+// the same time whatever the input, so an attacker cannot guess the token one
+// character at a time by timing. The API and the add form both use it.
+func (s *Server) tokenOK(got string) bool {
+	return s.adminToken != "" && subtle.ConstantTimeCompare([]byte(got), []byte(s.adminToken)) == 1
 }
 
 // ---- JSON shapes ----
@@ -261,14 +269,116 @@ func (s *Server) statusPage(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "list targets", err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	data := struct {
-		Targets []store.TargetStatus
-		Now     time.Time
-	}{list, time.Now()}
-	if err := s.page.Execute(w, data); err != nil {
-		s.log.Error("render status page", "err", err)
+	data := statusData{Targets: list, Now: time.Now(), FormOn: s.adminToken != ""}
+	// After the form adds a target it redirects to /?added=<name>. The note is
+	// shown only for a target that exists, so the link cannot make the page
+	// say something else.
+	if added := r.URL.Query().Get("added"); added != "" {
+		for _, t := range list {
+			if t.Name == added {
+				data.Added = added
+			}
+		}
 	}
+	s.render(w, http.StatusOK, "status.html", data)
+}
+
+type statusData struct {
+	Targets []store.TargetStatus
+	Now     time.Time
+	FormOn  bool   // ADMIN_TOKEN is set, so the add form works
+	Added   string // name of the target the form just added
+}
+
+// formValues are put back into the add form after an error, so nothing
+// typed is lost. The token is never put back.
+type formValues struct{ Name, URL, Interval, Timeout string }
+
+type addData struct {
+	FormOn bool
+	Form   formValues
+	Error  string
+}
+
+func (s *Server) newTargetPage(w http.ResponseWriter, r *http.Request) {
+	s.render(w, http.StatusOK, "add.html", addData{FormOn: s.adminToken != ""})
+}
+
+// addTargetForm handles the add form. The admin token is a field of the form,
+// not a cookie or a session: nothing is stored in the browser, and a page on
+// another site cannot post the form for you without knowing the token
+// (no cross-site request forgery). After success it redirects (303) to the
+// status page, so reloading that page does not post the form again.
+func (s *Server) addTargetForm(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if err := r.ParseForm(); err != nil {
+		s.renderAddError(w, http.StatusBadRequest, formValues{}, "the form could not be read (is it larger than 64 KB?)")
+		return
+	}
+	f := formValues{
+		Name:     strings.TrimSpace(r.PostFormValue("name")),
+		URL:      strings.TrimSpace(r.PostFormValue("url")),
+		Interval: strings.TrimSpace(r.PostFormValue("interval_seconds")),
+		Timeout:  strings.TrimSpace(r.PostFormValue("timeout_ms")),
+	}
+	if s.adminToken == "" {
+		s.renderAddError(w, http.StatusForbidden, f, "adding targets is off: set ADMIN_TOKEN to turn it on")
+		return
+	}
+	if !s.tokenOK(r.PostFormValue("token")) {
+		s.renderAddError(w, http.StatusUnauthorized, f, "wrong admin token")
+		return
+	}
+	interval, errI := optionalInt(f.Interval)
+	timeout, errT := optionalInt(f.Timeout)
+	if errI != nil || errT != nil {
+		s.renderAddError(w, http.StatusBadRequest, f, "interval and timeout must be whole numbers, or empty for the defaults")
+		return
+	}
+
+	nt := store.NewTarget{Name: f.Name, URL: f.URL, IntervalSeconds: interval, TimeoutMS: timeout}
+	if err := nt.Validate(); err != nil {
+		s.renderAddError(w, http.StatusBadRequest, f, err.Error())
+		return
+	}
+	t, err := s.store.CreateTarget(r.Context(), nt)
+	switch {
+	case errors.Is(err, store.ErrDuplicateName):
+		s.renderAddError(w, http.StatusConflict, f, err.Error())
+		return
+	case errors.Is(err, store.ErrInvalidTarget):
+		s.renderAddError(w, http.StatusBadRequest, f, err.Error())
+		return
+	case err != nil:
+		s.log.Error("create target", "err", err)
+		s.renderAddError(w, http.StatusInternalServerError, f, "internal error")
+		return
+	}
+
+	s.log.Info("target created", "id", t.ID, "name", t.Name, "url", t.URL, "via", "form")
+	http.Redirect(w, r, "/?added="+url.QueryEscape(t.Name), http.StatusSeeOther)
+}
+
+func (s *Server) renderAddError(w http.ResponseWriter, status int, f formValues, msg string) {
+	s.render(w, status, "add.html", addData{FormOn: s.adminToken != "", Form: f, Error: msg})
+}
+
+// render writes one of the HTML pages. html/template escapes every value, so a
+// target name like "<script>" is shown as text, never run.
+func (s *Server) render(w http.ResponseWriter, status int, page string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	if err := s.pages.ExecuteTemplate(w, page, data); err != nil {
+		s.log.Error("render page", "page", page, "err", err)
+	}
+}
+
+// optionalInt reads a form number; an empty field is 0, which means "use the default".
+func optionalInt(v string) (int, error) {
+	if v == "" {
+		return 0, nil
+	}
+	return strconv.Atoi(v)
 }
 
 // ---- helpers ----

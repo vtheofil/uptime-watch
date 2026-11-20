@@ -32,8 +32,9 @@ reach you in Discord when a site goes down and again when it recovers.
 
 ## Features
 
-- **One binary, five commands**: `serve` (status page, API, `/healthz`, `/readyz`,
-  `/metrics`), `worker` (the check loop), `migrate`, `prune`, `check <url>`.
+- **One binary, six commands**: `serve` (status page, API, `/healthz`, `/readyz`,
+  `/metrics`), `worker` (the check loop), `migrate`, `prune`, `sync-targets`
+  (targets kept in git), `check <url>`.
 - **Horizontally scalable worker**: due targets are claimed with
   `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)`, so any number of
   worker replicas share the work and never check the same target twice. A test
@@ -50,6 +51,15 @@ reach you in Discord when a site goes down and again when it recovers.
   `TargetChecksStale` alerts when results get older than three intervals.
 - **Tests against real dependencies**: real HTTP servers (`httptest`) and a real
   Postgres in Docker (`testcontainers-go`); no mocks.
+
+## Documentation
+
+- [Architecture](docs/architecture.md): the components, one check from
+  schedule to alert, from a commit to the cluster, where state lives.
+- [Decision records](docs/adr/): why it is built this way, and what else was
+  considered.
+- [Runbook](docs/runbook.md): what to do for each alert, a failed deploy, a
+  rollback or a rebuild. Every alert links to its section.
 
 ## Quick start
 

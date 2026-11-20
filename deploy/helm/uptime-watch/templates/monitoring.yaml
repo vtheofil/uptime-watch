@@ -45,6 +45,7 @@ spec:
           annotations:
             summary: {{`"{{ $labels.target }} is down"`}}
             description: {{`"The latest checks of {{ $labels.target }} have failed for 2 minutes. See the status page for the error."`}}
+            runbook_url: {{ .Values.metrics.prometheusRule.runbookBaseURL }}#targetdown
 
         # The failure TargetDown cannot see: if the worker stops, the last
         # result stays "up" forever. So we also alert when results get old.
@@ -58,6 +59,7 @@ spec:
           annotations:
             summary: {{`"{{ $labels.target }} has not been checked for 3 intervals"`}}
             description: "No new results are coming in. Is the worker running and can it reach the database?"
+            runbook_url: {{ .Values.metrics.prometheusRule.runbookBaseURL }}#targetchecksstale
 
         - alert: UptimeWorkerDown
           expr: absent(up{namespace="{{ .Release.Namespace }}", service="{{ .Release.Name }}-worker"} == 1)
@@ -68,6 +70,7 @@ spec:
           annotations:
             summary: "No uptime-watch worker is up"
             description: "Prometheus cannot scrape any worker pod, so nothing is being checked."
+            runbook_url: {{ .Values.metrics.prometheusRule.runbookBaseURL }}#uptimeworkerdown
 
         - alert: UptimeAPIDown
           expr: absent(up{namespace="{{ .Release.Namespace }}", service="{{ .Release.Name }}"} == 1)
@@ -78,6 +81,7 @@ spec:
           annotations:
             summary: "No uptime-watch API pod is up"
             description: "The status page, API and uptime_target_up are unavailable, so TargetDown cannot fire either."
+            runbook_url: {{ .Values.metrics.prometheusRule.runbookBaseURL }}#uptimeapidown
 {{- end }}
 {{- if .Values.metrics.dashboard.enabled }}
 ---

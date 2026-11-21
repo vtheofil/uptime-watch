@@ -131,3 +131,25 @@ kind-discord-secret: ## store your Discord webhook URL in the cluster (asked for
 .PHONY: kind-token
 kind-token: ## print the ADMIN_TOKEN of the app in kind
 	@kubectl -n uptime-watch get secret uptime-watch -o jsonpath='{.data.ADMIN_TOKEN}' | base64 -d; echo
+
+# ---- secrets: OpenBao outside kind, External Secrets inside ----
+
+.PHONY: openbao-up
+openbao-up: ## start OpenBao next to kind, initialise it once and unseal it (after kind-up)
+	./deploy/openbao/setup.sh
+
+.PHONY: openbao-down
+openbao-down: ## stop OpenBao (the secrets stay in its Docker volume)
+	docker compose -p uptime-watch-openbao -f deploy/openbao/compose.yaml down
+
+.PHONY: openbao-discord
+openbao-discord: ## store the Discord webhook URL in OpenBao (asked for, never shown or saved)
+	./deploy/openbao/put-discord.sh
+
+.PHONY: kind-openbao-token
+kind-openbao-token: ## give External Secrets in kind a read-only OpenBao token (bootstrap does this)
+	./deploy/openbao/k8s-token.sh
+
+.PHONY: kind-refresh-secrets
+kind-refresh-secrets: ## fetch the secrets from OpenBao now instead of at the next refresh
+	kubectl -n monitoring annotate externalsecret alertmanager-discord force-sync=$$(date +%s) --overwrite

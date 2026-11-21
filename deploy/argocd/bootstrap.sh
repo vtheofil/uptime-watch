@@ -54,14 +54,27 @@ if ! kubectl -n "$NS" get secret uptime-watch >/dev/null 2>&1; then
     --from-literal=ADMIN_TOKEN="$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')"
 fi
 
+# External secrets (the Discord webhook) come from OpenBao, which runs outside
+# the cluster. The cluster only needs a token to read them: the one secret
+# that still has to be put in by hand.
+echo "==> OpenBao token for External Secrets"
+source "$HERE/../openbao/lib.sh"
+if openbao_ready; then
+  "$HERE/../openbao/k8s-token.sh"
+else
+  echo "OpenBao is not running or is sealed. The rest works; the 'secrets' app stays"
+  echo "Degraded until you run: make openbao-up && make kind-openbao-token"
+fi
+
 echo "==> root app"
 kubectl apply -f "$HERE/root.yaml"
 
 cat <<'EOF'
 
 Argo CD is syncing from GitHub (5 to 10 minutes on a fresh cluster). Next:
-  make kind-discord-secret    # any time, before or after monitoring; no restart needed
-  make kind-urls              # every UI, once Traefik is up
+  make kind-urls             # every UI, once Traefik is up
   make kind-argocd-password   # user: admin
 Before Traefik is up, `make kind-ports` reaches Argo CD on http://localhost:8443.
+The Discord webhook comes from OpenBao (make openbao-discord, once); without
+OpenBao, `make kind-discord-secret` sets it by hand. No restart is needed.
 EOF

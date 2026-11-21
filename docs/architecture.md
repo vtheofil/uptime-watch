@@ -95,11 +95,13 @@ after the other; each wave waits until the previous one is healthy.
 | Wave | Application | Why here |
 |---|---|---|
 | -3 | `gateway-api` | CRDs that Traefik and every route need |
+| -3 | `external-secrets` | the operator and CRDs that copy secrets from OpenBao |
 | -2 | `traefik` | the entry point, before anything adds a route |
 | -1 | `monitoring` | Prometheus Operator CRDs that the app's ServiceMonitor needs |
 | 0 | `postgres` | the app's database |
 | 1 | `uptime-watch` | the app (migrate → pods → sync-targets) |
 | 2 | `routes` | routes to the platform UIs, once their Services exist |
+| 3 | `secrets` | ExternalSecrets, last: without OpenBao they wait without holding up the rest |
 
 ## Where state lives
 
@@ -110,4 +112,6 @@ after the other; each wave waits until the previous one is healthy.
 | Targets added with the API or the form | database | no |
 | Check history | database | no (backups: an idea in the README) |
 | Postgres password, `ADMIN_TOKEN` | Secrets made by `bootstrap.sh` | no, regenerated |
-| Discord webhook | Secret, typed in with `make kind-discord-secret` | no, typed again |
+| Discord webhook | OpenBao (Docker volume, outside kind) → External Secrets → Secret | yes |
+| OpenBao unseal key and root token | `~/.config/uptime-watch/openbao-init.json`, outside the repo | yes; lose it and OpenBao cannot be opened |
+| OpenBao token of the cluster | Secret made by `bootstrap.sh` | no, a new one each rebuild |

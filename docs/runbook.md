@@ -84,9 +84,14 @@ Alerts fire in Alertmanager but nothing reaches Discord. The stack's own
 `AlertmanagerClusterFailedToSendAlerts` fires too.
 
 1. Is the Secret there? `k -n monitoring get secret alertmanager-discord`.
-   If not: `make kind-discord-secret` (or, with OpenBao, `make openbao-discord`).
-   No restart is needed: the kubelet adds it to the pod within a minute or
-   two, and Alertmanager reads it on every send.
+   It comes from OpenBao through External Secrets. If it is missing, check
+   `k -n monitoring get externalsecret alertmanager-discord`: not Ready means
+   OpenBao is down or sealed (`make openbao-up`), the webhook is not stored
+   (`make openbao-discord`), or the cluster has no OpenBao token
+   (`make kind-openbao-token`); then `make kind-refresh-secrets`. Without
+   OpenBao, `make kind-discord-secret` sets it by hand. No restart is needed:
+   the kubelet adds it to the pod within a minute or two, and Alertmanager
+   reads it on every send.
 2. Alertmanager's log: `k -n monitoring logs statefulset/alertmanager-monitoring-kube-prometheus-alertmanager -c alertmanager --tail=30`.
    `404`/`401` from Discord: the webhook was deleted or the URL is wrong; make
    a new one in the channel settings and store it again.
@@ -179,8 +184,8 @@ and targets added through the API).
 
 ```bash
 make kind-down && make kind-up
-make kind-argocd            # Argo CD, the generated Secrets, the root app
-make kind-discord-secret    # once the monitoring namespace exists; no restart needed
+make openbao-up             # OpenBao survives the rebuild; this unseals it
+make kind-argocd            # Argo CD, the generated Secrets, the OpenBao token, the root app
 make kind-argocd-password   # new cluster, new password
 ```
 

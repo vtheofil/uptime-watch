@@ -75,6 +75,15 @@ metrics:
     labels: {}
     # Each alert's runbook_url is this plus #<alert name in lower case>.
     runbookBaseURL: https://github.com/vtheofil/uptime-watch/blob/main/docs/runbook.md
+    # NoInternet tells "our network is down" from "those sites are down":
+    # every canary (a big site, each on its own provider) fails at once while
+    # insideTarget, checked inside the cluster, is up. Alertmanager can then
+    # hold back TargetDown (an inhibit rule). Give the canaries a short
+    # interval (15 s), so they notice before TargetDown fires. Leave either
+    # field empty for no NoInternet alert.
+    noInternet:
+      canaries: []     # target names, e.g. [github, cloudflare, google]
+      insideTarget: "" # e.g. self
   dashboard:
     enabled: false
 

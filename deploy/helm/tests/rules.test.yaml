@@ -1,0 +1,123 @@
+# Cases for the chart's alert rules, run by test-rules.sh (`make test-rules`).
+# Each case gives the metric values minute by minute ("0x15" = 0, sixteen
+# times) and says which alerts fire at a given time. rules.yaml is the chart
+# rendered with the values Argo CD uses.
+rule_files: [rules.yaml]
+evaluation_interval: 1m
+
+tests:
+  - name: no internet - NoInternet fires before TargetDown
+    interval: 1m
+    input_series:
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="github"}
+        values: "0x15"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="cloudflare"}
+        values: "0x15"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="google"}
+        values: "0x15"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="example"}
+        values: "0x15"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="self"}
+        values: "1x15"
+    alert_rule_test:
+      # After 1 minute NoInternet fires; TargetDown needs 2, so Alertmanager
+      # already has NoInternet when the first TargetDown arrives.
+      - eval_time: 1m
+        alertname: NoInternet
+        exp_alerts:
+          - exp_labels: { namespace: uptime-watch, severity: warning }
+            exp_annotations:
+              summary: "No internet: every canary site is down"
+              description: "github, cloudflare, google all fail while self, inside the cluster, is up: this cluster cannot reach the internet. TargetDown is held back meanwhile."
+              runbook_url: https://github.com/vtheofil/uptime-watch/blob/main/docs/runbook.md#nointernet
+      - eval_time: 1m
+        alertname: TargetDown
+        exp_alerts: []
+
+  - name: network back - NoInternet keeps firing 5 minutes, then stops
+    interval: 1m
+    input_series:
+      # down for minutes 0-9, back from minute 10
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="github"}
+        values: "0x9 1x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="cloudflare"}
+        values: "0x9 1x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="google"}
+        values: "0x9 1x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="self"}
+        values: "1x20"
+    alert_rule_test:
+      - eval_time: 13m
+        alertname: NoInternet
+        exp_alerts:
+          - exp_labels: { namespace: uptime-watch, severity: warning }
+            exp_annotations:
+              summary: "No internet: every canary site is down"
+              description: "github, cloudflare, google all fail while self, inside the cluster, is up: this cluster cannot reach the internet. TargetDown is held back meanwhile."
+              runbook_url: https://github.com/vtheofil/uptime-watch/blob/main/docs/runbook.md#nointernet
+      - eval_time: 16m
+        alertname: NoInternet
+        exp_alerts: []
+
+  - name: one canary down - a real outage, TargetDown fires and is not held back
+    interval: 1m
+    input_series:
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="github"}
+        values: "0x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="cloudflare"}
+        values: "1x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="google"}
+        values: "1x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="self"}
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: NoInternet
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: TargetDown
+        exp_alerts:
+          - exp_labels: { namespace: uptime-watch, target: github, severity: warning }
+            exp_annotations:
+              summary: "github is down"
+              description: "The latest checks of github have failed for 2 minutes. See the status page for the error."
+              runbook_url: https://github.com/vtheofil/uptime-watch/blob/main/docs/runbook.md#targetdown
+
+  - name: self down too - not the internet, the cluster; no NoInternet
+    interval: 1m
+    input_series:
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="github"}
+        values: "0x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="cloudflare"}
+        values: "0x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="google"}
+        values: "0x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="self"}
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: NoInternet
+        exp_alerts: []
+
+  - name: two api replicas - one series per pod still counts each canary once
+    interval: 1m
+    input_series:
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="github"}
+        values: "0x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-2", target="github"}
+        values: "0x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="cloudflare"}
+        values: "0x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-2", target="cloudflare"}
+        values: "0x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="google"}
+        values: "1x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-2", target="google"}
+        values: "1x10"
+      - series: uptime_target_up{namespace="uptime-watch", pod="api-1", target="self"}
+        values: "1x10"
+    alert_rule_test:
+      # 4 down series, but only 2 of the 3 canaries: no NoInternet.
+      - eval_time: 5m
+        alertname: NoInternet
+        exp_alerts: []

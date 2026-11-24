@@ -47,6 +47,32 @@ spec:
             description: {{`"The latest checks of {{ $labels.target }} have failed for 2 minutes. See the status page for the error."`}}
             runbook_url: {{ .Values.metrics.prometheusRule.runbookBaseURL }}#targetdown
 
+        {{- with .Values.metrics.prometheusRule.noInternet }}
+        {{- if and .canaries .insideTarget }}
+
+        # Our network, not theirs: all the canaries are down at once while the
+        # target inside the cluster is up. Alertmanager holds back TargetDown
+        # while this fires. It fires a minute before TargetDown, so that is in
+        # place first, and keeps firing 5 minutes after the network is back,
+        # while targets with longer intervals catch up.
+        - alert: NoInternet
+          expr: |
+            count by (namespace) (
+              max by (namespace, target) (uptime_target_up{namespace="{{ $.Release.Namespace }}", target=~"{{ join "|" .canaries }}"}) == 0
+            ) == {{ len .canaries }}
+            and on (namespace)
+            max by (namespace) (uptime_target_up{namespace="{{ $.Release.Namespace }}", target="{{ .insideTarget }}"}) == 1
+          for: 1m
+          keep_firing_for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "No internet: every canary site is down"
+            description: "{{ join ", " .canaries }} all fail while {{ .insideTarget }}, inside the cluster, is up: this cluster cannot reach the internet. TargetDown is held back meanwhile."
+            runbook_url: {{ $.Values.metrics.prometheusRule.runbookBaseURL }}#nointernet
+        {{- end }}
+        {{- end }}
+
         # The failure TargetDown cannot see: if the worker stops, the last
         # result stays "up" forever. So we also alert when results get old.
         - alert: TargetChecksStale

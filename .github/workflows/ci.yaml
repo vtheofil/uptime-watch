@@ -42,6 +42,10 @@ jobs:
       # The runner has Docker, so testcontainers starts a real Postgres here too.
       - name: go test
         run: go test -race ./...
+      # The alert rules of the chart, evaluated by promtool on made-up series
+      # (the runner has helm and Docker).
+      - name: alert rules
+        run: make test-rules
 
   image:
     name: build, scan and push image

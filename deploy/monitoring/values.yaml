@@ -16,15 +16,31 @@ prometheus:
     resources:
       requests: { cpu: 100m, memory: 256Mi }
 
+defaultRules:
+  disabled:
+    # False alarms on a laptop. This rule counts how often Alertmanager's
+    # process_start_time_seconds changes, taking each change for a restart.
+    # Linux works that start time out from the boot time, and the boot time
+    # from the wall clock minus the uptime. When the laptop sleeps, WSL's
+    # clock jumps and is then corrected slowly, so the start time of every
+    # process moves without anything restarting (over 800 changes in 3 days,
+    # no restart). Real crash loops still alert: KubePodCrashLooping fires
+    # when Kubernetes itself reports a container in CrashLoopBackOff. It is a
+    # warning, so it reaches Discord for uptime-watch and shows in Alertmanager
+    # for the rest.
+    AlertmanagerClusterCrashlooping: true
+
 alertmanager:
   alertmanagerSpec:
     externalUrl: http://alertmanager.localhost:8000
     resources:
       requests: { cpu: 10m, memory: 32Mi }
     # The Discord webhook URL is a secret (anyone with it can post to the
-    # channel), so it lives in the Secret "alertmanager-discord", created with
-    # `make kind-discord-secret`, never in git. optional: Alertmanager still
-    # starts without it; Discord messages then fail and are logged.
+    # channel), so it is never in git. It lives in OpenBao, and External
+    # Secrets copies it into the Secret "alertmanager-discord" (deploy/secrets/);
+    # without OpenBao, `make kind-discord-secret` creates that Secret by hand.
+    # optional: Alertmanager still starts without it; Discord messages then
+    # fail and are logged.
     volumes:
       - name: discord
         secret:

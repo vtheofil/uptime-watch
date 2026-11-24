@@ -73,26 +73,10 @@ alertmanager:
         # Serious problems of the cluster itself.
         - receiver: discord
           matchers: ['severity = "critical"']
-    # An inhibit rule holds back (mutes) the target alerts while the source
-    # alert fires. Setting this list replaces the chart's own, so its four
-    # defaults are repeated first.
-    inhibit_rules:
-      # A critical alert mutes the warning/info alerts of the same name.
-      - source_matchers: ['severity = "critical"']
-        target_matchers: ['severity =~ "warning|info"']
-        equal: [namespace, alertname]
-      - source_matchers: ['severity = "warning"']
-        target_matchers: ['severity = "info"']
-        equal: [namespace, alertname]
-      # InfoInhibitor: the stack mutes info alerts with it, and never sends it.
-      - source_matchers: ['alertname = "InfoInhibitor"']
-        target_matchers: ['severity = "info"']
-        equal: [namespace]
-      - target_matchers: ['alertname = "InfoInhibitor"']
-      # Ours: with no internet, a site that fails says nothing about the site.
-      - source_matchers: ['alertname = "NoInternet"']
-        target_matchers: ['alertname = "TargetDown"']
-        equal: [namespace]
+    # No inhibit_rules here: the chart's defaults stay as they are (a list set
+    # here would replace them, not add to them). An app brings its own inhibit
+    # rules as an AlertmanagerConfig in its namespace, like uptime-watch does
+    # for NoInternet (deploy/helm/uptime-watch/templates/monitoring.yaml).
     receivers:
       - name: "null"
       - name: discord

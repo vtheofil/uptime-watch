@@ -108,6 +108,29 @@ spec:
             summary: "No uptime-watch API pod is up"
             description: "The status page, API and uptime_target_up are unavailable, so TargetDown cannot fire either."
             runbook_url: {{ .Values.metrics.prometheusRule.runbookBaseURL }}#uptimeapidown
+{{- with .Values.metrics.prometheusRule.noInternet }}
+{{- if and .canaries .insideTarget }}
+---
+# While NoInternet fires, Alertmanager mutes TargetDown. The Prometheus
+# Operator adds this to Alertmanager's configuration, next to the platform's
+# own rules instead of replacing them, and adds namespace="<this namespace>"
+# to both sides: it cannot mute the alerts of anything else in the cluster.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: {{ $.Release.Name }}-no-internet
+  labels:
+    {{- include "uw.labels" $ | nindent 4 }}
+spec:
+  inhibitRules:
+    - sourceMatch:
+        - name: alertname
+          value: NoInternet
+      targetMatch:
+        - name: alertname
+          value: TargetDown
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if .Values.metrics.dashboard.enabled }}
 ---

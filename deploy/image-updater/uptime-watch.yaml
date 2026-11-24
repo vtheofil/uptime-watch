@@ -1,0 +1,36 @@
+# Which images Argo CD Image Updater watches, and how it records a new one.
+#
+# Every 2 minutes it lists the tags of ghcr.io/vtheofil/uptime-watch, keeps
+# the commit SHAs (40 hex characters, so not "latest"), and picks the one
+# built last. If that is not what the Application runs, it commits the new
+# tag to main, in deploy/helm/uptime-watch/.argocd-source-uptime-watch.yaml
+# (Argo CD reads that file as Helm parameters of the Application uptime-watch),
+# and Argo CD deploys it like any other commit. Git stays the record of what
+# runs, and a rollback is still a commit.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: uptime-watch
+  namespace: argocd # must be the namespace of the Applications it updates
+spec:
+  writeBackConfig:
+    # Push with the deploy key in the Secret argocd/image-updater-git, which
+    # External Secrets copies from OpenBao (deploy/secrets/image-updater-git.yaml).
+    method: git:secret:image-updater-git
+    gitConfig:
+      repository: git@github.com:vtheofil/uptime-watch.git # SSH, for the deploy key
+      branch: main
+  applicationRefs:
+    - namePattern: uptime-watch
+      images:
+        - alias: app
+          imageName: ghcr.io/vtheofil/uptime-watch
+          commonUpdateSettings:
+            # CI tags images with the commit SHA, which has no order of its
+            # own: the newest build is the one to run.
+            updateStrategy: newest-build
+            allowTags: regexp:^[0-9a-f]{40}$
+          manifestTargets:
+            helm:
+              name: image.repository
+              tag: image.tag

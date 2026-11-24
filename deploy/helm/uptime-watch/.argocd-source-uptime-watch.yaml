@@ -1,0 +1,8 @@
+helm:
+  parameters:
+  - name: image.repository
+    value: ghcr.io/vtheofil/uptime-watch
+    forcestring: true
+  - name: image.tag
+    value: 4b2f6e4ff273a35ba466995fe24e5ea7ce8b9be6
+    forcestring: true

@@ -222,6 +222,7 @@ with sync waves:
 | 0 | `postgres` | `deploy/kind/postgres.yaml` |
 | 1 | `uptime-watch` | `deploy/helm/uptime-watch` |
 | 2 | `routes` | `deploy/routes/`: HTTPRoutes for Grafana, Prometheus, Alertmanager, Argo CD |
+| 2 | `image-updater` | Argo CD Image Updater chart 1.5.0 + `deploy/image-updater/` |
 | 3 | `secrets` | `deploy/secrets/`: secrets copied from OpenBao (last, so a missing one blocks nothing) |
 
 ```bash
@@ -270,8 +271,29 @@ rollout replaces it, Traefik sends each request to a ready pod behind the
 Service. It is plain HTTP on 127.0.0.1 only: fine for a laptop, not for
 anything shared.
 
-Deploying a new version means changing `image.tag` in
-`deploy/argocd/apps/uptime-watch.yaml` to a commit SHA pushed by CI.
+#### New versions deploy themselves
+
+Merge a change to the app's code, and a few minutes later it runs:
+
+```
+merge to main ─▶ CI pushes ghcr.io/…:<sha> (only when cmd/, internal/, go.mod/go.sum or Dockerfile changed)
+              ─▶ Argo CD Image Updater sees the newer image (it looks every 2 minutes)
+              ─▶ commits the tag to deploy/helm/uptime-watch/.argocd-source-uptime-watch.yaml   [skip ci]
+              ─▶ Argo CD deploys that commit
+```
+
+Git still says which version runs, in that one file, and every deploy is a
+commit by `argocd-image-updater`. Pull before you work on main: those commits
+arrive there by themselves. The updater pushes with a GitHub deploy key that
+may write to this repository only, kept in OpenBao:
+
+```bash
+make openbao-deploy-key   # once: makes the key, stores it, prints the public half for GitHub
+```
+
+Then add the printed key on GitHub (Settings → Deploy keys, "Allow write
+access") and run `make kind-refresh-secrets`. Rolling back works differently
+with an updater: see the [runbook](docs/runbook.md#roll-back-a-release).
 
 ### Targets as code
 

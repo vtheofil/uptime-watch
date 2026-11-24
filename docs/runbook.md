@@ -17,7 +17,8 @@ so it can never reach another cluster by mistake.
   [the root sync failed](#the-root-sync-failed) ·
   [sync-targets failed](#the-sync-targets-job-failed) ·
   [migrate failed](#the-migrate-job-failed) ·
-  [secrets is Degraded](#secrets-is-degraded) · [roll back](#roll-back-a-release)
+  [secrets is Degraded](#secrets-is-degraded) · [roll back](#roll-back-a-release) ·
+  [a new version is not deployed](#a-new-version-is-not-deployed)
 - [Access](#access): [a UI does not open](#a-ui-does-not-open)
 - [Rebuild the cluster](#rebuild-the-cluster)
 
@@ -201,16 +202,50 @@ Alertmanager keeps the last copy of the Secret, so Discord keeps working.
 
 ### Roll back a release
 
-The running version is `image.tag` in `deploy/argocd/apps/uptime-watch.yaml`.
+The running version is `image.tag` in
+`deploy/helm/uptime-watch/.argocd-source-uptime-watch.yaml`, which Argo CD
+Image Updater commits. Reverting that commit alone does not last: two minutes
+later the updater sees that a newer image exists and puts it back.
+
+**The usual way: revert the code.** Revert the commit that broke it, in a pull
+request like any change. CI builds an image of the old code, the updater
+deploys it (about 10 minutes in all), and history shows what happened.
 
 ```bash
-git log --oneline -- deploy/argocd/apps/uptime-watch.yaml   # find the commit that changed it
-git revert <commit> && git push
+git revert <code commit>   # on a branch, then a pull request
 ```
 
-Argo CD deploys the previous tag. `kubectl rollout undo` does not work here:
-`selfHeal` puts back what git says. Migrations are not undone by a rollback;
-they are written so the previous version still works with the new schema.
+**In a hurry: pin the old version.** In `deploy/image-updater/uptime-watch.yaml`,
+allow only the tag that worked; the updater deploys it within two minutes.
+
+```yaml
+allowTags: regexp:^<the good 40-character sha>$
+```
+
+```bash
+git log --oneline -- deploy/helm/uptime-watch/.argocd-source-uptime-watch.yaml   # the tags that ran
+```
+
+Put the regexp `^[0-9a-f]{40}$` back once a fixed version is out.
+
+`kubectl rollout undo` does not work here: `selfHeal` puts back what git says.
+Migrations are not undone by a rollback; they are written so the previous
+version still works with the new schema.
+
+### A new version is not deployed
+
+CI pushed an image, but the pods still run the old tag.
+
+1. Did CI push one? Only changes to `cmd/`, `internal/`, `go.mod`, `go.sum`
+   or the `Dockerfile` make an image (the "did the app change?" step of the
+   image job).
+2. The updater's log: `k -n argocd logs deploy/image-updater-argocd-image-updater --since=10m`.
+   It names the image, the tag it found, and any error while pushing to git.
+3. Push errors: is the Secret there (`k -n argocd get externalsecret image-updater-git`)?
+   Is the deploy key on GitHub, with write access?
+4. A commit by `argocd-image-updater` on main but no rollout: Argo CD has not
+   seen it yet (Refresh the `uptime-watch` app), or see
+   [an app stays Progressing](#an-app-stays-progressing).
 
 ## Access
 

@@ -18,6 +18,7 @@ reasoning is not lost when someone (including future us) wonders about it.
 | [0009](0009-no-internet-inhibits-target-down.md) | Tell our network from theirs: NoInternet holds back TargetDown | Accepted |
 | [0010](0010-app-inhibit-rules-as-alertmanagerconfig.md) | The app brings its own inhibit rules, as an AlertmanagerConfig | Accepted |
 | [0011](0011-openbao-kubernetes-auth.md) | External Secrets logs in to OpenBao with Kubernetes auth, not a token | Accepted |
+| [0012](0012-image-updater-commits-new-tags.md) | Argo CD Image Updater commits new image tags to git | Accepted |
 
 ## How they are written
 

@@ -39,6 +39,7 @@ should come back by itself when the cluster is rebuilt.
 - The ESO token is periodic and lasts 32 days without renewal; rebuilds make a
   new one. OpenBao's Kubernetes auth (ESO proves itself with its service
   account, no static token) is the next step.
+  [0011](0011-openbao-kubernetes-auth.md) takes it: the token is gone.
 - Laptop shortcuts, wrong for production: a single unseal key in a file, the
   root token kept, no TLS.
 - `make kind-discord-secret` remains for clusters without OpenBao; using both

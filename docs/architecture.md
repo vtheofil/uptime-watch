@@ -114,4 +114,4 @@ after the other; each wave waits until the previous one is healthy.
 | Postgres password, `ADMIN_TOKEN` | Secrets made by `bootstrap.sh` | no, regenerated |
 | Discord webhook | OpenBao (Docker volume, outside kind) → External Secrets → Secret | yes |
 | OpenBao unseal key and root token | `~/.config/uptime-watch/openbao-init.json`, outside the repo | yes; lose it and OpenBao cannot be opened |
-| OpenBao token of the cluster | Secret made by `bootstrap.sh` | no, a new one each rebuild; it also expires after 32 days (`make kind-openbao-token`) |
+| How the cluster logs in to OpenBao | no secret: Kubernetes auth with the ServiceAccount `openbao-auth`; OpenBao keeps the cluster's address and CA | the ServiceAccount comes back from git; `bootstrap.sh` gives OpenBao the new CA |

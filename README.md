@@ -368,7 +368,7 @@ OpenBao (Docker, kind network) ──► External Secrets Operator (in kind) ─
 make kind-up
 make openbao-up        # starts OpenBao; the first time it also initialises it, then it unseals it
 make openbao-discord   # first time only: asks for the webhook URL (hidden) and stores it in OpenBao
-make kind-argocd       # also gives the cluster a read-only OpenBao token
+make kind-argocd       # also tells OpenBao about this cluster (Kubernetes auth)
 ```
 
 After that, a rebuild (`make kind-down && make kind-up && make openbao-up &&
@@ -379,14 +379,16 @@ make kind-argocd`) brings the webhook back by itself.
   it and the secrets cannot be opened again. OpenBao starts sealed after every
   restart; `make openbao-up` unseals it, `make openbao-down` stops it (the
   secrets stay in its Docker volume). The UI is on <http://127.0.0.1:8200/ui>.
-- The cluster reads OpenBao with a token that can only read
-  `secret/uptime-watch/*` (policy `deploy/openbao/uptime-watch-read.hcl`),
-  stored as `external-secrets/openbao-token`. That token is the one secret put
-  into a new cluster by hand ("secret zero"). It lasts 32 days; a rebuild or
-  `make kind-openbao-token` makes a new one. If OpenBao is down, sealed or
-  the token has expired, the `secrets` app turns Degraded: see the
-  [runbook](docs/runbook.md#secrets-is-degraded). OpenBao's Kubernetes auth
-  would remove even that token: a next step.
+- No OpenBao token is stored in the cluster. External Secrets logs in with
+  **Kubernetes auth**: it gets a short-lived token of the ServiceAccount
+  `external-secrets/openbao-auth` from Kubernetes, OpenBao asks the cluster's
+  API server whether that token is real (a TokenReview), and answers with a
+  1-hour token that can only read `secret/uptime-watch/*` (policy
+  `deploy/openbao/uptime-watch-read.hcl`). Nothing to renew, nothing that
+  expires. A new cluster has a new CA, so `make kind-argocd` (or
+  `make kind-openbao-auth`) tells OpenBao about it. If OpenBao is down or
+  sealed, the `secrets` app turns Degraded: see the
+  [runbook](docs/runbook.md#secrets-is-degraded).
 - A new value in OpenBao reaches the cluster within 15 minutes, or at once with
   `make kind-refresh-secrets`.
 - For a laptop, OpenBao runs with one unseal key, plain HTTP on 127.0.0.1 and a

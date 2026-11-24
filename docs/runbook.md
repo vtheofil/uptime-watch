@@ -110,8 +110,8 @@ Alerts fire in Alertmanager but nothing reaches Discord. The stack's own
    It comes from OpenBao through External Secrets. If it is missing, check
    `k -n monitoring get externalsecret alertmanager-discord`: not Ready means
    OpenBao is down or sealed (`make openbao-up`), the webhook is not stored
-   (`make openbao-discord`), or the cluster has no OpenBao token
-   (`make kind-openbao-token`); then `make kind-refresh-secrets`. Without
+   (`make openbao-discord`), or OpenBao does not know this cluster
+   (`make kind-openbao-auth`); then `make kind-refresh-secrets`. Without
    OpenBao, `make kind-discord-secret` sets it by hand. No restart is needed:
    the kubelet adds it to the pod within a minute or two, and Alertmanager
    reads it on every send.
@@ -191,8 +191,7 @@ External Secrets' log has the exact reason:
 |---|---|---|
 | OpenBao is not running | `docker ps` has no `uptime-watch-openbao` | `make openbao-up` |
 | OpenBao restarted (a reboot) and is sealed | `curl -s 127.0.0.1:8200/v1/sys/seal-status` says `"sealed":true` | `make openbao-up` |
-| The cluster has no OpenBao token | the log says `cannot get Kubernetes secret "openbao-token"` | `make kind-openbao-token` |
-| The token expired (it lasts 32 days) | the log says `permission denied` | `make kind-openbao-token` |
+| OpenBao does not know this cluster (rebuilt while OpenBao was down) | `make kind-openbao-auth` ends with a test login: it fails, with the reason | `make kind-openbao-auth` |
 | The webhook is not stored | the store is Ready, the ExternalSecret is not | `make openbao-discord` |
 
 Then `make kind-refresh-secrets`. After failing for a long time, External

@@ -150,10 +150,14 @@ openbao-down: ## stop OpenBao (the secrets stay in its Docker volume)
 openbao-discord: ## store the Discord webhook URL in OpenBao (asked for, never shown or saved)
 	./deploy/openbao/put-discord.sh
 
+.PHONY: openbao-deploy-key
+openbao-deploy-key: ## make Image Updater's GitHub deploy key, store it in OpenBao, print the public half
+	./deploy/openbao/put-deploy-key.sh
+
 .PHONY: kind-openbao-auth
 kind-openbao-auth: ## let External Secrets in kind log in to OpenBao with Kubernetes auth (bootstrap does this)
 	./deploy/openbao/k8s-auth.sh
 
 .PHONY: kind-refresh-secrets
 kind-refresh-secrets: ## fetch the secrets from OpenBao now instead of at the next refresh
-	kubectl -n monitoring annotate externalsecret alertmanager-discord force-sync=$$(date +%s) --overwrite
+	kubectl annotate externalsecret -A --all force-sync=$$(date +%s) --overwrite

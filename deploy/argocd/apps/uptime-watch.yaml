@@ -1,7 +1,8 @@
 # The app itself, from the Helm chart in this repo. Wave 1: after Postgres
-# and the monitoring CRDs. Deploying a new version = changing image.tag here
-# in a commit; Argo CD notices and rolls it out (the migrate Job runs first,
-# as a PreSync hook).
+# and the monitoring CRDs. The version that runs is image.tag in
+# deploy/helm/uptime-watch/.argocd-source-uptime-watch.yaml, which Argo CD
+# Image Updater commits when CI pushes a new image (deploy/image-updater/);
+# Argo CD then rolls it out (the migrate Job runs first, as a PreSync hook).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -19,9 +20,8 @@ spec:
       valuesObject:
         image:
           repository: ghcr.io/vtheofil/uptime-watch
-          # Pin a commit SHA pushed by CI, e.g. "3f2c1d0e...". "latest" is only
-          # for the first try: with it, git does not say which version runs.
-          tag: 4b2f6e4ff273a35ba466995fe24e5ea7ce8b9be6
+          # No tag here: it is in .argocd-source-uptime-watch.yaml (above),
+          # so there is one place that says which version runs.
           pullPolicy: IfNotPresent
         # Targets as code: add, change or remove a target here, commit, push.
         # After the sync, the sync-targets Job makes the database match this

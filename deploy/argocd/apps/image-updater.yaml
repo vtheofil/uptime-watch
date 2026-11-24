@@ -1,0 +1,47 @@
+# Argo CD Image Updater: when CI pushes a new image, it commits the new tag to
+# git, and Argo CD deploys it (deploy/image-updater/uptime-watch.yaml says
+# what it watches). Two sources: the chart, and our ImageUpdater resource.
+#
+# Wave 2, before the secrets (wave 3): if its git key is missing in OpenBao,
+# the updater runs and logs failed pushes, and nothing else waits for it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: image-updater
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  sources:
+    - repoURL: https://argoproj.github.io/argo-helm
+      chart: argocd-image-updater
+      targetRevision: 1.5.0
+      helm:
+        releaseName: image-updater
+        valuesObject:
+          config:
+            git.user: argocd-image-updater
+            git.email: noreply@argoproj.io
+            # "[skip ci]": GitHub runs no workflow for these commits; they
+            # only change a tag, and CI already tested the code behind it.
+            git.commit-message-template: |
+              deploy({{ .AppName }}): run {{ range .AppChanges }}{{ .NewTag }}{{ end }} [skip ci]
+
+              {{ range .AppChanges }}{{ .Image }}: {{ .OldTag }} -> {{ .NewTag }}
+              {{ end }}
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+    - repoURL: https://github.com/vtheofil/uptime-watch.git
+      targetRevision: main
+      path: deploy/image-updater
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # The ImageUpdater CRD comes with the chart in the same sync.
+      - SkipDryRunOnMissingResource=true

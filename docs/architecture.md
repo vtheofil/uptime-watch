@@ -70,14 +70,17 @@ flowchart LR
   dev([commit]) --> pr[pull request]
   pr --> ci[CI: lint, test with real Postgres,<br/>image + Trivy, e2e on kind]
   ci -->|merge to main| main[(main)]
-  main -->|CI pushes| ghcr[(ghcr.io<br/>image:sha)]
+  main -->|CI pushes, if the app changed| ghcr[(ghcr.io<br/>image:sha)]
+  ghcr -->|newest build| updater[Argo CD<br/>Image Updater]
+  updater -->|commits image.tag = sha| main
   main -->|Argo CD watches| argo[Argo CD]
-  argo -->|image.tag = sha| cluster[kind cluster]
+  argo --> cluster[kind cluster]
   ghcr -->|pull| cluster
 ```
 
-Deploying a new version is a commit that changes `image.tag` to a SHA that CI
-pushed; rolling back is `git revert` ([0004](adr/0004-gitops-with-argo-cd.md)).
+Deploying a new version is still a commit that sets `image.tag` to a SHA that
+CI pushed ([0004](adr/0004-gitops-with-argo-cd.md)), but Image Updater makes
+that commit ([0012](adr/0012-image-updater-commits-new-tags.md)).
 Inside one sync of the app, the order is:
 
 ```
@@ -101,6 +104,7 @@ after the other; each wave waits until the previous one is healthy.
 | 0 | `postgres` | the app's database |
 | 1 | `uptime-watch` | the app (migrate → pods → sync-targets) |
 | 2 | `routes` | routes to the platform UIs, once their Services exist |
+| 2 | `image-updater` | commits new image tags; before `secrets`, so its missing key holds nothing up |
 | 3 | `secrets` | ExternalSecrets, last: without OpenBao they wait without holding up the rest |
 
 ## Where state lives
@@ -113,5 +117,7 @@ after the other; each wave waits until the previous one is healthy.
 | Check history | database | no (backups: an idea in the README) |
 | Postgres password, `ADMIN_TOKEN` | Secrets made by `bootstrap.sh` | no, regenerated |
 | Discord webhook | OpenBao (Docker volume, outside kind) → External Secrets → Secret | yes |
+| Image Updater's GitHub deploy key | OpenBao → External Secrets → Secret `argocd/image-updater-git` | yes |
+| The version that runs | git: `.argocd-source-uptime-watch.yaml`, committed by Image Updater | yes |
 | OpenBao unseal key and root token | `~/.config/uptime-watch/openbao-init.json`, outside the repo | yes; lose it and OpenBao cannot be opened |
 | How the cluster logs in to OpenBao | no secret: Kubernetes auth with the ServiceAccount `openbao-auth`; OpenBao keeps the cluster's address and CA | the ServiceAccount comes back from git; `bootstrap.sh` gives OpenBao the new CA |

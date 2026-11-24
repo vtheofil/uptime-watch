@@ -150,9 +150,9 @@ openbao-down: ## stop OpenBao (the secrets stay in its Docker volume)
 openbao-discord: ## store the Discord webhook URL in OpenBao (asked for, never shown or saved)
 	./deploy/openbao/put-discord.sh
 
-.PHONY: kind-openbao-token
-kind-openbao-token: ## give External Secrets in kind a read-only OpenBao token (bootstrap does this)
-	./deploy/openbao/k8s-token.sh
+.PHONY: kind-openbao-auth
+kind-openbao-auth: ## let External Secrets in kind log in to OpenBao with Kubernetes auth (bootstrap does this)
+	./deploy/openbao/k8s-auth.sh
 
 .PHONY: kind-refresh-secrets
 kind-refresh-secrets: ## fetch the secrets from OpenBao now instead of at the next refresh

@@ -4,5 +4,5 @@ helm:
     value: ghcr.io/vtheofil/uptime-watch
     forcestring: true
   - name: image.tag
-    value: 4b2f6e4ff273a35ba466995fe24e5ea7ce8b9be6
+    value: 348954783ddc0c10545edd95a5d156bd7c348e41
     forcestring: true

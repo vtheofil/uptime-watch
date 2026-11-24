@@ -15,6 +15,7 @@ reasoning is not lost when someone (including future us) wonders about it.
 | [0006](0006-gateway-api-with-traefik.md) | Gateway API with Traefik for traffic into the cluster | Accepted |
 | [0007](0007-add-form-with-token-field.md) | Add-target form: the admin token is a form field, not a login | Accepted |
 | [0008](0008-external-secrets-from-openbao.md) | Secrets from outside: OpenBao next to the cluster, External Secrets inside | Accepted |
+| [0009](0009-no-internet-inhibits-target-down.md) | Tell our network from theirs: NoInternet holds back TargetDown | Accepted |
 
 ## How they are written
 

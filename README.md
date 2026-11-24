@@ -85,6 +85,7 @@ Run the checks CI runs:
 ```bash
 make lint      # gofmt, go vet, staticcheck, govulncheck
 make test      # unit and integration tests (needs Docker)
+make test-rules  # the alert rules, with promtool (needs helm and Docker)
 ```
 
 ## API
@@ -318,6 +319,16 @@ DATABASE_URL='postgres://uptime:uptime@localhost:5433/uptime?sslmode=disable' \
 | `TargetChecksStale` | a target has no new result for 3 intervals (worker stopped or cannot write) |
 | `UptimeWorkerDown` | no worker pod can be scraped for 5 minutes |
 | `UptimeAPIDown` | no API pod can be scraped for 5 minutes |
+| `NoInternet` | every canary target (`github`, `cloudflare`, `google`) is down while `self` is up: our network, not theirs. While it fires, `TargetDown` is held back |
+
+`NoInternet` exists because this runs on a laptop: without Wi-Fi every outside
+target fails, and Discord would get one `TargetDown` per site when the network
+returns. Instead Alertmanager holds them back with an inhibit rule
+(`deploy/monitoring/values.yaml`); the canaries and the target inside the
+cluster are set in `metrics.prometheusRule.noInternet` of the chart. The rules
+have unit tests (`deploy/helm/tests/`), run with `make test-rules`: promtool
+evaluates them on made-up series, for example "all canaries down for 1 minute"
+or "the network back for 4 minutes".
 
 ### Notifications
 
@@ -388,7 +399,8 @@ make kind-argocd`) brings the webhook back by itself.
 `.github/workflows/ci.yaml` on every pull request and push to `main`:
 
 1. **lint and test**: gofmt, go vet, staticcheck, govulncheck, `go test -race`
-   (Postgres tests run in Docker on the runner)
+   (Postgres tests run in Docker on the runner), and the alert rules with
+   promtool
 2. **image**: build with BuildKit cache, scan with Trivy (fails on fixable
    HIGH/CRITICAL), push to `ghcr.io` on `main`, tagged with the commit SHA
 3. **e2e**: create a kind cluster, install Postgres and the chart with one git

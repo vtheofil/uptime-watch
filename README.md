@@ -323,9 +323,10 @@ DATABASE_URL='postgres://uptime:uptime@localhost:5433/uptime?sslmode=disable' \
 
 `NoInternet` exists because this runs on a laptop: without Wi-Fi every outside
 target fails, and Discord would get one `TargetDown` per site when the network
-returns. Instead Alertmanager holds them back with an inhibit rule
-(`deploy/monitoring/values.yaml`); the canaries and the target inside the
-cluster are set in `metrics.prometheusRule.noInternet` of the chart. The rules
+returns. Instead Alertmanager holds them back with an inhibit rule, which the
+chart brings as an `AlertmanagerConfig` next to its `PrometheusRule`; the
+canaries and the target inside the cluster are set in
+`metrics.prometheusRule.noInternet` of the chart. The rules
 have unit tests (`deploy/helm/tests/`), run with `make test-rules`: promtool
 evaluates them on made-up series, for example "all canaries down for 1 minute"
 or "the network back for 4 minutes".

@@ -32,8 +32,18 @@ spec:
             - name: self
               url: http://uptime-watch.uptime-watch.svc/healthz
               interval_seconds: 30
+            # The canaries of NoInternet (below): big sites on three different
+            # providers, checked often. All three down at once means our
+            # network, not theirs.
             - name: github
               url: https://github.com
+              interval_seconds: 15
+            - name: cloudflare
+              url: https://www.cloudflare.com
+              interval_seconds: 15
+            - name: google
+              url: https://www.google.com
+              interval_seconds: 15
         # http://status.localhost:8000 through Traefik (deploy/traefik).
         httpRoute:
           enabled: true
@@ -46,6 +56,9 @@ spec:
             enabled: true
           prometheusRule:
             enabled: true
+            noInternet:
+              canaries: [github, cloudflare, google]
+              insideTarget: self
           dashboard:
             enabled: true
   destination:

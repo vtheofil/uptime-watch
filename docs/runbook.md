@@ -11,7 +11,8 @@ so it can never reach another cluster by mistake.
 
 - [Alerts](#alerts): [TargetDown](#targetdown) ·
   [TargetChecksStale](#targetchecksstale) · [UptimeWorkerDown](#uptimeworkerdown) ·
-  [UptimeAPIDown](#uptimeapidown) · [No Discord messages](#no-discord-messages)
+  [UptimeAPIDown](#uptimeapidown) · [NoInternet](#nointernet) ·
+  [No Discord messages](#no-discord-messages)
 - [Deploys](#deploys): [an app stays Progressing](#an-app-stays-progressing) ·
   [the root sync failed](#the-root-sync-failed) ·
   [sync-targets failed](#the-sync-targets-job-failed) ·
@@ -35,7 +36,9 @@ A target's latest checks have failed for 2 minutes.
    so test from a throwaway pod:
    `k -n uptime-watch run tmp --rm -it --restart=Never --image=busybox:1.36 -- wget -qO- -T 5 <url>`.
 4. Several outside targets down at the same time while `self` (inside the
-   cluster) stays up: most likely our own network, not theirs. The status page
+   cluster) stays up: most likely our own network, not theirs. When all the
+   canaries fail too, [NoInternet](#nointernet) fires and holds these alerts
+   back; with only some of them, look further here. The status page
    shows `lookup … server misbehaving` or `context deadline exceeded`. Check
    that this machine is online (`curl -I https://github.com`), then CoreDNS,
    which sends every name outside the cluster to the host's DNS:
@@ -78,6 +81,25 @@ No API pod can be scraped for 5 minutes: the status page, the API and
 1. As for the worker, with `-l app.kubernetes.io/component=api`.
 2. Pods running but not ready: `/readyz` fails when the database does not
    answer. Check `postgres-0`.
+
+### NoInternet
+
+All the canary targets (`github`, `cloudflare`, `google`: big sites on
+different providers) fail at once while `self`, inside the cluster, is up. The
+cluster cannot reach the internet; the sites are most likely fine. Alertmanager
+holds back every `TargetDown` meanwhile (an inhibit rule), and NoInternet
+itself does not go to Discord: it shows in Alertmanager, with the held-back
+alerts listed as inhibited.
+
+1. Is this machine online? `curl -I https://github.com`. Not online (a laptop
+   without Wi-Fi, a VPN that dropped): nothing to do in the cluster. When the
+   network returns, the checks recover, and NoInternet stays 5 more minutes
+   so that slower targets catch up without sending TargetDown.
+2. Online, but the cluster is not: DNS inside the cluster, as in
+   [TargetDown](#targetdown) step 4 (CoreDNS logs, `i/o timeout`).
+3. A real outage of a site that starts while NoInternet fires is held back
+   too. When NoInternet ends, a site that is still down sends its
+   `TargetDown` as usual.
 
 ### No Discord messages
 

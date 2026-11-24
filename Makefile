@@ -31,6 +31,10 @@ lint: ## gofmt, go vet, staticcheck and govulncheck (the same checks as CI)
 test: ## run all tests (needs Docker for the Postgres tests)
 	go test -race ./...
 
+.PHONY: test-rules
+test-rules: ## unit-test the alert rules with promtool (needs helm and Docker)
+	./deploy/helm/tests/test-rules.sh
+
 .PHONY: build
 build: ## build bin/uptime-watch
 	go build -o bin/uptime-watch ./cmd/uptime-watch

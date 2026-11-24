@@ -16,6 +16,7 @@ reasoning is not lost when someone (including future us) wonders about it.
 | [0007](0007-add-form-with-token-field.md) | Add-target form: the admin token is a form field, not a login | Accepted |
 | [0008](0008-external-secrets-from-openbao.md) | Secrets from outside: OpenBao next to the cluster, External Secrets inside | Accepted |
 | [0009](0009-no-internet-inhibits-target-down.md) | Tell our network from theirs: NoInternet holds back TargetDown | Accepted |
+| [0010](0010-app-inhibit-rules-as-alertmanagerconfig.md) | The app brings its own inhibit rules, as an AlertmanagerConfig | Accepted |
 
 ## How they are written
 

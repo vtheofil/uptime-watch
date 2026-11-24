@@ -38,6 +38,8 @@ symptoms, with the wrong cause.
 - Three more targets, checked every 15 seconds: a little more traffic.
 - Overriding `inhibit_rules` replaces the stack's defaults, so they are
   repeated in our values and must be compared after a chart upgrade.
+  [0010](0010-app-inhibit-rules-as-alertmanagerconfig.md) removes this: the
+  inhibit rule moved to an `AlertmanagerConfig` in the chart.
 
 ## Alternatives considered
 

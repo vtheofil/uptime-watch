@@ -239,7 +239,7 @@ CI pushed an image, but the pods still run the old tag.
 1. Did CI push one? Only changes to `cmd/`, `internal/`, `go.mod`, `go.sum`
    or the `Dockerfile` make an image (the "did the app change?" step of the
    image job).
-2. The updater's log: `k -n argocd logs deploy/image-updater-argocd-image-updater --since=10m`.
+2. The updater's log: `k -n argocd logs deploy/image-updater-argocd-image-updater-controller --since=10m`.
    It names the image, the tag it found, and any error while pushing to git.
 3. Push errors: is the Secret there (`k -n argocd get externalsecret image-updater-git`)?
    Is the deploy key on GitHub, with write access?

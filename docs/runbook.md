@@ -15,7 +15,8 @@ so it can never reach another cluster by mistake.
 - [Deploys](#deploys): [an app stays Progressing](#an-app-stays-progressing) ·
   [the root sync failed](#the-root-sync-failed) ·
   [sync-targets failed](#the-sync-targets-job-failed) ·
-  [migrate failed](#the-migrate-job-failed) · [roll back](#roll-back-a-release)
+  [migrate failed](#the-migrate-job-failed) ·
+  [secrets is Degraded](#secrets-is-degraded) · [roll back](#roll-back-a-release)
 - [Access](#access): [a UI does not open](#a-ui-does-not-open)
 - [Rebuild the cluster](#rebuild-the-cluster)
 
@@ -148,6 +149,34 @@ running. `k -n uptime-watch logs job/uptime-watch-migrate`. A migration that
 works on an empty database can fail on one with rows (for example a new
 `NOT NULL` column without a default). Fix it in a new migration, never by
 editing one that has run.
+
+### secrets is Degraded
+
+`secrets` is Degraded, and so is `root`: the root app takes its health from
+its Applications, so one Degraded child is enough. Its sync is still
+`Succeeded`, and nothing else is held up (`secrets` is the last wave).
+The ExternalSecrets cannot read OpenBao:
+
+```bash
+k get clustersecretstore openbao
+k -n monitoring get externalsecret alertmanager-discord -o jsonpath='{.status.conditions[0].message}{"\n"}'
+```
+
+External Secrets' log has the exact reason:
+`k -n external-secrets logs deploy/external-secrets --since=15m | grep error`.
+
+| Cause | How to tell | Fix |
+|---|---|---|
+| OpenBao is not running | `docker ps` has no `uptime-watch-openbao` | `make openbao-up` |
+| OpenBao restarted (a reboot) and is sealed | `curl -s 127.0.0.1:8200/v1/sys/seal-status` says `"sealed":true` | `make openbao-up` |
+| The cluster has no OpenBao token | the log says `cannot get Kubernetes secret "openbao-token"` | `make kind-openbao-token` |
+| The token expired (it lasts 32 days) | the log says `permission denied` | `make kind-openbao-token` |
+| The webhook is not stored | the store is Ready, the ExternalSecret is not | `make openbao-discord` |
+
+Then `make kind-refresh-secrets`. After failing for a long time, External
+Secrets waits longer and longer between attempts (up to about 16 minutes);
+the refresh changes the ExternalSecret, which makes it try at once. Meanwhile
+Alertmanager keeps the last copy of the Secret, so Discord keeps working.
 
 ### Roll back a release
 

@@ -333,6 +333,12 @@ the stack's own `AlertmanagerClusterFailedToSendAlerts` alert reports. When the
 Secret appears, the kubelet adds it to the running pod within a minute or two,
 and Alertmanager reads the file on every send: no restart.
 
+One of the stack's default rules is turned off: `AlertmanagerClusterCrashlooping`
+takes every change of a process's start time for a restart, and a laptop that
+sleeps moves those start times without any restart (the reason is in
+`deploy/monitoring/values.yaml`). `KubePodCrashLooping` still reports real
+crash loops.
+
 ### Secrets from OpenBao
 
 Generated secrets (the Postgres password, `ADMIN_TOKEN`) are made by
@@ -359,13 +365,16 @@ make kind-argocd`) brings the webhook back by itself.
 - `make openbao-up` saves the unseal key and the root token to
   `~/.config/uptime-watch/openbao-init.json` (mode 600, outside the repo). Lose
   it and the secrets cannot be opened again. OpenBao starts sealed after every
-  restart; `make openbao-up` unseals it. The UI is on <http://127.0.0.1:8200/ui>.
+  restart; `make openbao-up` unseals it, `make openbao-down` stops it (the
+  secrets stay in its Docker volume). The UI is on <http://127.0.0.1:8200/ui>.
 - The cluster reads OpenBao with a token that can only read
   `secret/uptime-watch/*` (policy `deploy/openbao/uptime-watch-read.hcl`),
   stored as `external-secrets/openbao-token`. That token is the one secret put
   into a new cluster by hand ("secret zero"). It lasts 32 days; a rebuild or
-  `make kind-openbao-token` makes a new one. OpenBao's Kubernetes auth would
-  remove even that token: a next step.
+  `make kind-openbao-token` makes a new one. If OpenBao is down, sealed or
+  the token has expired, the `secrets` app turns Degraded: see the
+  [runbook](docs/runbook.md#secrets-is-degraded). OpenBao's Kubernetes auth
+  would remove even that token: a next step.
 - A new value in OpenBao reaches the cluster within 15 minutes, or at once with
   `make kind-refresh-secrets`.
 - For a laptop, OpenBao runs with one unseal key, plain HTTP on 127.0.0.1 and a
